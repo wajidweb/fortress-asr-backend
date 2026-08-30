@@ -279,7 +279,7 @@ model DobEntry {
   
   // Relations
   site        Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  guard       GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
+  guard       GuardProfile @relation("GuardDobEntries", fields: [guardId], references: [id], onDelete: Cascade)
   shift       Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   @@index([siteId])

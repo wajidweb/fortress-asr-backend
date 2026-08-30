@@ -8,9 +8,9 @@ generator client {
 }
 
 enum Role {
-  SYSTEM_ADMIN
+  SUPER_ADMIN
   SUPERVISOR
-  SECURITY_GUARD
+  GUARD
   CLIENT
 }
 
@@ -46,20 +46,22 @@ enum IncidentStatus {
 }
 
 model User {
-  id               String       @id @default(uuid())
-  email            String       @unique
-  passwordHash     String
-  firstName        String
-  lastName         String
-  role             Role
-  isActive         Boolean      @default(true)
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
   // Relations
-  guardProfile     GuardProfile?
-  clientProfile    ClientProfile?
-  auditLogs        AuditLog[]
+  guardProfile  GuardProfile?
+  clientProfile ClientProfile?
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  resetTokens   PasswordResetToken[]
 
   @@map("users")
 }
@@ -67,103 +69,103 @@ model User {
 // Map helper to handle default CURRENT_TIMESTAMP in Prisma with MySQL
 // In modern Prisma, @default(now()) handles setting current server time
 model GuardProfile {
-  id                     String       @id @default(uuid())
-  userId                 String       @unique @map("user_id")
-  siaLicenceNumber       String?      @map("sia_licence_number")
-  siaExpiryDate          DateTime?    @map("sia_expiry_date")
-  rightToWorkExpiryDate  DateTime?    @map("rtw_expiry_date")
-  hasIndefiniteRTW       Boolean      @default(false) @map("has_indefinite_rtw")
-  status                 GuardStatus  @default(ACTIVE)
-  payRatePerHour         Decimal      @default(0.00) @db.Decimal(10, 2) @map("pay_rate_per_hour")
-  phoneNumber            String?      @map("phone_number")
-  emergencyContactName   String?      @map("emergency_contact_name")
-  emergencyContactPhone  String?      @map("emergency_contact_phone")
-  createdAt              DateTime     @default(now()) @map("created_at")
-  updatedAt              DateTime     @updatedAt @map("updated_at")
+  id                    String      @id @default(uuid())
+  userId                String      @unique @map("user_id")
+  siaLicenceNumber      String?     @map("sia_licence_number")
+  siaExpiryDate         DateTime?   @map("sia_expiry_date")
+  rightToWorkExpiryDate DateTime?   @map("rtw_expiry_date")
+  hasIndefiniteRTW      Boolean     @default(false) @map("has_indefinite_rtw")
+  status                GuardStatus @default(ACTIVE)
+  payRatePerHour        Decimal     @default(0.00) @map("pay_rate_per_hour") @db.Decimal(10, 2)
+  phoneNumber           String?     @map("phone_number")
+  emergencyContactName  String?     @map("emergency_contact_name")
+  emergencyContactPhone String?     @map("emergency_contact_phone")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
 
   // Relations
-  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  shifts                 Shift[]
-  patrolLogs             PatrolLog[]
-  incidents              Incident[]
-  dobEntries             DobEntry[]   @relation("GuardDobEntries")
-  handoverAcknowledge    Handover[]   @relation("IncomingGuardHandover")
-  equipmentAssignments   EquipmentAssignment[]
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shifts               Shift[]
+  patrolLogs           PatrolLog[]
+  incidents            Incident[]
+  dobEntries           DobEntry[]            @relation("GuardDobEntries")
+  handoverAcknowledge  Handover[]            @relation("IncomingGuardHandover")
+  equipmentAssignments EquipmentAssignment[]
 
   @@map("guard_profiles")
 }
 
 model ClientProfile {
-  id               String       @id @default(uuid())
-  userId           String       @unique @map("user_id")
-  companyName      String       @map("company_name")
-  slug             String       @unique // For route isolation: /client/{client-unique-slug}
-  billingAddress   String?      @map("billing_address")
-  billingRateHour  Decimal      @default(0.00) @db.Decimal(10, 2) @map("billing_rate_hour")
-  contactPerson    String?      @map("contact_person")
-  contactPhone     String?      @map("contact_phone")
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
+  id              String   @id @default(uuid())
+  userId          String   @unique @map("user_id")
+  companyName     String   @map("company_name")
+  slug            String   @unique // For route isolation: /client/{client-unique-slug}
+  billingAddress  String?  @map("billing_address")
+  billingRateHour Decimal  @default(0.00) @map("billing_rate_hour") @db.Decimal(10, 2)
+  contactPerson   String?  @map("contact_person")
+  contactPhone    String?  @map("contact_phone")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sites            Site[]
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sites Site[]
 
   @@map("client_profiles")
 }
 
 model Site {
-  id                  String       @id @default(uuid())
-  clientId            String       @map("client_id")
+  id                  String   @id @default(uuid())
+  clientId            String   @map("client_id")
   name                String
   address             String
-  latitude            Decimal      @db.Decimal(10, 8)
-  longitude           Decimal      @db.Decimal(11, 8)
-  geofenceRadiusMeter Int          @default(100) @map("geofence_radius_meter") // Geofencing threshold
-  siteInstructions    String?      @db.Text @map("site_instructions")
-  emergencyContact    String?      @map("emergency_contact")
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @updatedAt @map("updated_at")
+  latitude            Decimal  @db.Decimal(10, 8)
+  longitude           Decimal  @db.Decimal(11, 8)
+  geofenceRadiusMeter Int      @default(100) @map("geofence_radius_meter") // Geofencing threshold
+  siteInstructions    String?  @map("site_instructions") @db.Text
+  emergencyContact    String?  @map("emergency_contact")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   // Relations
-  client              ClientProfile @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  shifts              Shift[]
-  patrolRoutes        PatrolRoute[]
-  incidents           Incident[]
-  dobEntries          DobEntry[]
+  client       ClientProfile @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  shifts       Shift[]
+  patrolRoutes PatrolRoute[]
+  incidents    Incident[]
+  dobEntries   DobEntry[]
 
   @@index([clientId])
   @@map("sites")
 }
 
 model Shift {
-  id                  String       @id @default(uuid())
-  siteId              String       @map("site_id")
-  guardId             String       @map("guard_id")
-  startTime           DateTime     @map("start_time")
-  endTime             DateTime     @map("end_time")
-  status              ShiftStatus  @default(SCHEDULED)
-  preShiftConfirmedAt DateTime?    @map("pre_shift_confirmed_at")
-  
-  // Evidence details (GPS and visual timestamps)
-  checkInTime         DateTime?    @map("check_in_time")
-  checkInLatitude     Decimal?     @db.Decimal(10, 8) @map("check_in_latitude")
-  checkInLongitude    Decimal?     @db.Decimal(11, 8) @map("check_in_longitude")
-  checkInPhotoUrl     String?      @map("check_in_photo_url")
-  checkInSiaBadgePhoto String?     @map("check_in_sia_badge_photo")
-  checkInPpeVerified  Boolean      @default(false) @map("check_in_ppe_verified")
+  id                  String      @id @default(uuid())
+  siteId              String      @map("site_id")
+  guardId             String      @map("guard_id")
+  startTime           DateTime    @map("start_time")
+  endTime             DateTime    @map("end_time")
+  status              ShiftStatus @default(SCHEDULED)
+  preShiftConfirmedAt DateTime?   @map("pre_shift_confirmed_at")
 
-  checkOutTime        DateTime?    @map("check_out_time")
-  checkOutLatitude    Decimal?     @db.Decimal(10, 8) @map("check_out_latitude")
-  checkOutLongitude   Decimal?     @db.Decimal(11, 8) @map("check_out_longitude")
-  checkOutPhotoUrl    String?      @map("check_out_photo_url")
+  // Evidence details (GPS and visual timestamps)
+  checkInTime          DateTime? @map("check_in_time")
+  checkInLatitude      Decimal?  @map("check_in_latitude") @db.Decimal(10, 8)
+  checkInLongitude     Decimal?  @map("check_in_longitude") @db.Decimal(11, 8)
+  checkInPhotoUrl      String?   @map("check_in_photo_url")
+  checkInSiaBadgePhoto String?   @map("check_in_sia_badge_photo")
+  checkInPpeVerified   Boolean   @default(false) @map("check_in_ppe_verified")
+
+  checkOutTime      DateTime? @map("check_out_time")
+  checkOutLatitude  Decimal?  @map("check_out_latitude") @db.Decimal(10, 8)
+  checkOutLongitude Decimal?  @map("check_out_longitude") @db.Decimal(11, 8)
+  checkOutPhotoUrl  String?   @map("check_out_photo_url")
 
   // Financial rates snapshot at shift creation
-  guardPayRateHour    Decimal      @db.Decimal(10, 2) @map("guard_pay_rate_hour")
-  clientBillingRateHour Decimal    @db.Decimal(10, 2) @map("client_billing_rate_hour")
+  guardPayRateHour      Decimal @map("guard_pay_rate_hour") @db.Decimal(10, 2)
+  clientBillingRateHour Decimal @map("client_billing_rate_hour") @db.Decimal(10, 2)
 
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
   site                Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
@@ -179,15 +181,15 @@ model Shift {
 }
 
 model PatrolRoute {
-  id          String        @id @default(uuid())
-  siteId      String        @map("site_id")
+  id          String   @id @default(uuid())
+  siteId      String   @map("site_id")
   name        String
   description String?
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
-  site        Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  site        Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
   checkpoints Checkpoint[]
   patrolLogs  PatrolLog[]
 
@@ -196,38 +198,38 @@ model PatrolRoute {
 }
 
 model Checkpoint {
-  id            String       @id @default(uuid())
-  routeId       String       @map("route_id")
-  name          String
-  qrCodeToken   String       @unique @map("qr_code_token") // NFC tag or QR code identifier
-  latitude      Decimal      @db.Decimal(10, 8)
-  longitude     Decimal      @db.Decimal(11, 8)
-  orderIndex    Int          @default(0) @map("order_index")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id          String   @id @default(uuid())
+  routeId     String   @map("route_id")
+  name        String
+  qrCodeToken String   @unique @map("qr_code_token") // NFC tag or QR code identifier
+  latitude    Decimal  @db.Decimal(10, 8)
+  longitude   Decimal  @db.Decimal(11, 8)
+  orderIndex  Int      @default(0) @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
-  route         PatrolRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  patrolLogs    PatrolLog[]
+  route      PatrolRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  patrolLogs PatrolLog[]
 
   @@index([routeId])
   @@map("checkpoints")
 }
 
 model PatrolLog {
-  id           String       @id @default(uuid())
-  routeId      String       @map("route_id")
-  checkpointId String       @map("checkpoint_id")
-  guardId      String       @map("guard_id")
-  scannedAt    DateTime     @default(now()) @map("scanned_at")
-  latitude     Decimal      @db.Decimal(10, 8)
-  longitude    Decimal      @db.Decimal(11, 8)
-  isVerified   Boolean      @default(true) @map("is_verified") // GPS matched checkpoint coordinates
+  id           String   @id @default(uuid())
+  routeId      String   @map("route_id")
+  checkpointId String   @map("checkpoint_id")
+  guardId      String   @map("guard_id")
+  scannedAt    DateTime @default(now()) @map("scanned_at")
+  latitude     Decimal  @db.Decimal(10, 8)
+  longitude    Decimal  @db.Decimal(11, 8)
+  isVerified   Boolean  @default(true) @map("is_verified") // GPS matched checkpoint coordinates
 
   // Relations
-  route        PatrolRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  checkpoint   Checkpoint   @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
-  guard        GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
+  route      PatrolRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  checkpoint Checkpoint   @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
+  guard      GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
 
   @@index([routeId])
   @@index([checkpointId])
@@ -236,32 +238,32 @@ model PatrolLog {
 }
 
 model Incident {
-  id               String           @id @default(uuid())
-  guardId          String           @map("guard_id")
-  siteId           String           @map("site_id")
-  shiftId          String?          @map("shift_id")
-  title            String
-  description      String           @db.Text
-  category         String           // Trespass, Property Damage, Medical, Fire, Theft, General
-  priority         IncidentPriority @default(MEDIUM)
-  status           IncidentStatus   @default(REPORTED)
-  
-  // Media links stored as semi-structured JSON string list
-  evidenceMediaUrls String?         @db.Text @map("evidence_media_urls") 
-  voiceNoteUrl     String?          @map("voice_note_url")
-  latitude         Decimal?         @db.Decimal(10, 8)
-  longitude        Decimal?         @db.Decimal(11, 8)
+  id          String           @id @default(uuid())
+  guardId     String           @map("guard_id")
+  siteId      String           @map("site_id")
+  shiftId     String?          @map("shift_id")
+  title       String
+  description String           @db.Text
+  category    String // Trespass, Property Damage, Medical, Fire, Theft, General
+  priority    IncidentPriority @default(MEDIUM)
+  status      IncidentStatus   @default(REPORTED)
 
-  isPublishedToClient Boolean       @default(false) @map("is_published_to_client")
-  investigationNotes  String?        @db.Text @map("investigation_notes")
-  resolvedAt       DateTime?        @map("resolved_at")
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  // Media links stored as semi-structured JSON string list
+  evidenceMediaUrls String?  @map("evidence_media_urls") @db.Text
+  voiceNoteUrl      String?  @map("voice_note_url")
+  latitude          Decimal? @db.Decimal(10, 8)
+  longitude         Decimal? @db.Decimal(11, 8)
+
+  isPublishedToClient Boolean   @default(false) @map("is_published_to_client")
+  investigationNotes  String?   @map("investigation_notes") @db.Text
+  resolvedAt          DateTime? @map("resolved_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  guard            GuardProfile     @relation(fields: [guardId], references: [id], onDelete: Cascade)
-  site             Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  shift            Shift?           @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  guard GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
+  site  Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  shift Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   @@index([guardId])
   @@index([siteId])
@@ -270,17 +272,17 @@ model Incident {
 }
 
 model DobEntry {
-  id          String       @id @default(uuid())
-  siteId      String       @map("site_id")
-  guardId     String       @map("guard_id")
-  shiftId     String?      @map("shift_id")
-  occurrence  String       @db.Text
-  loggedAt    DateTime     @default(now()) @map("logged_at")
-  
+  id         String   @id @default(uuid())
+  siteId     String   @map("site_id")
+  guardId    String   @map("guard_id")
+  shiftId    String?  @map("shift_id")
+  occurrence String   @db.Text
+  loggedAt   DateTime @default(now()) @map("logged_at")
+
   // Relations
-  site        Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  guard       GuardProfile @relation("GuardDobEntries", fields: [guardId], references: [id], onDelete: Cascade)
-  shift       Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  site  Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  guard GuardProfile @relation("GuardDobEntries", fields: [guardId], references: [id], onDelete: Cascade)
+  shift Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   @@index([siteId])
   @@index([guardId])
@@ -288,17 +290,17 @@ model DobEntry {
 }
 
 model Handover {
-  id                     String       @id @default(uuid())
-  outgoingShiftId        String       @map("outgoing_shift_id")
-  incomingShiftId        String       @map("incoming_shift_id")
-  incomingGuardId        String       @map("incoming_guard_id")
-  transitionNotes        String       @db.Text @map("transition_notes")
-  acknowledgedAt         DateTime     @default(now()) @map("acknowledged_at")
+  id              String   @id @default(uuid())
+  outgoingShiftId String   @map("outgoing_shift_id")
+  incomingShiftId String   @map("incoming_shift_id")
+  incomingGuardId String   @map("incoming_guard_id")
+  transitionNotes String   @map("transition_notes") @db.Text
+  acknowledgedAt  DateTime @default(now()) @map("acknowledged_at")
 
   // Relations
-  outgoingShift          Shift        @relation("OutgoingShiftHandover", fields: [outgoingShiftId], references: [id], onDelete: Cascade)
-  incomingShift          Shift        @relation("IncomingShiftHandover", fields: [incomingShiftId], references: [id], onDelete: Cascade)
-  incomingGuard          GuardProfile @relation("IncomingGuardHandover", fields: [incomingGuardId], references: [id], onDelete: Cascade)
+  outgoingShift Shift        @relation("OutgoingShiftHandover", fields: [outgoingShiftId], references: [id], onDelete: Cascade)
+  incomingShift Shift        @relation("IncomingShiftHandover", fields: [incomingShiftId], references: [id], onDelete: Cascade)
+  incomingGuard GuardProfile @relation("IncomingGuardHandover", fields: [incomingGuardId], references: [id], onDelete: Cascade)
 
   @@index([outgoingShiftId])
   @@index([incomingShiftId])
@@ -307,30 +309,30 @@ model Handover {
 }
 
 model Equipment {
-  id           String                 @id @default(uuid())
+  id           String                @id @default(uuid())
   name         String
-  serialNumber String                 @unique @map("serial_number")
-  type         String                 // Bodycam, Radio, Torch, Keys, Badge
-  condition    String                 // New, Good, Damaged, OutForService
-  createdAt    DateTime               @default(now()) @map("created_at")
-  updatedAt    DateTime               @updatedAt @map("updated_at")
+  serialNumber String                @unique @map("serial_number")
+  type         String // Bodycam, Radio, Torch, Keys, Badge
+  condition    String // New, Good, Damaged, OutForService
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
   assignments  EquipmentAssignment[]
 
   @@map("equipment")
 }
 
 model EquipmentAssignment {
-  id          String       @id @default(uuid())
-  equipmentId String       @map("equipment_id")
-  guardId     String       @map("guard_id")
-  assignedAt  DateTime     @default(now()) @map("assigned_at")
-  returnedAt  DateTime?    @map("returned_at")
-  outCondition String      @map("out_condition")
-  inCondition  String?     @map("in_condition")
+  id           String    @id @default(uuid())
+  equipmentId  String    @map("equipment_id")
+  guardId      String    @map("guard_id")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  returnedAt   DateTime? @map("returned_at")
+  outCondition String    @map("out_condition")
+  inCondition  String?   @map("in_condition")
 
   // Relations
-  equipment   Equipment    @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
-  guard       GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
+  equipment Equipment    @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  guard     GuardProfile @relation(fields: [guardId], references: [id], onDelete: Cascade)
 
   @@index([equipmentId])
   @@index([guardId])
@@ -338,16 +340,44 @@ model EquipmentAssignment {
 }
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  userId     String?  @map("user_id")
-  action     String   // E.g., "SHIFT_OVERLAP_OVERRIDE", "GUARD_SUSPENDED", "CLIENT_CREATED"
-  details    String   @db.Text
-  ipAddress  String?  @map("ip_address")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String // E.g., "SHIFT_OVERLAP_OVERRIDE", "GUARD_SUSPENDED", "CLIENT_CREATED"
+  details   String   @db.Text
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@map("audit_logs")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }

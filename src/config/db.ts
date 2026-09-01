@@ -2,10 +2,30 @@ import { PrismaClient, Role } from '@prisma/client';
 import { logger } from '../utils/logger';
 import { encryptDeterministic, encryptRandomized } from '../utils/crypto';
 import { hashPassword } from '../utils/auth.utils';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
 });
+
+async function runMigrations(): Promise<void> {
+  logger.info('Checking and running database migrations...');
+  try {
+    const { stdout, stderr } = await execAsync('npx prisma migrate deploy');
+    if (stdout) {
+      logger.info(`Prisma Migrate:\n${stdout.trim()}`);
+    }
+    if (stderr) {
+      logger.warn(`Prisma Migrate Warning:\n${stderr.trim()}`);
+    }
+  } catch (error) {
+    logger.error('Failed to run database migrations programmatically. Make sure you have database access and Prisma installed.', error);
+    throw error;
+  }
+}
 
 async function ensureSuperAdmin() {
   try {
@@ -67,6 +87,9 @@ async function ensureSuperAdmin() {
 
 export const connectDatabase = async (): Promise<void> => {
   try {
+    // Run database migrations programmatically
+    await runMigrations();
+
     await prisma.$connect();
     logger.info('MySQL Database successfully connected via Prisma ORM.');
     

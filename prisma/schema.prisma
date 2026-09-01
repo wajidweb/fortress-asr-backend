@@ -15,6 +15,7 @@ enum Role {
 }
 
 enum GuardStatus {
+  PENDING_APPROVAL
   ACTIVE
   SUSPENDED
   INACTIVE
@@ -51,6 +52,7 @@ model User {
   passwordHash String
   firstName    String
   lastName     String
+  phoneNumber  String?  @map("phone_number")
   role         Role
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
@@ -71,11 +73,15 @@ model User {
 model GuardProfile {
   id                    String      @id @default(uuid())
   userId                String      @unique @map("user_id")
+  firstName             String      @default("") @map("first_name")
+  lastName              String      @default("") @map("last_name")
   siaLicenceNumber      String?     @map("sia_licence_number")
   siaExpiryDate         DateTime?   @map("sia_expiry_date")
+  rtwDocumentType       String?     @map("rtw_document_type")
+  rtwDocumentUrl        String?     @map("rtw_document_url")
   rightToWorkExpiryDate DateTime?   @map("rtw_expiry_date")
   hasIndefiniteRTW      Boolean     @default(false) @map("has_indefinite_rtw")
-  status                GuardStatus @default(ACTIVE)
+  status                GuardStatus @default(PENDING_APPROVAL)
   payRatePerHour        Decimal     @default(0.00) @map("pay_rate_per_hour") @db.Decimal(10, 2)
   phoneNumber           String?     @map("phone_number")
   emergencyContactName  String?     @map("emergency_contact_name")
@@ -100,7 +106,8 @@ model ClientProfile {
   userId          String   @unique @map("user_id")
   companyName     String   @map("company_name")
   slug            String   @unique // For route isolation: /client/{client-unique-slug}
-  billingAddress  String?  @map("billing_address")
+  billingAddress  String   @map("billing_address") @db.Text
+  logoUrl         String?  @map("logo_url")
   billingRateHour Decimal  @default(0.00) @map("billing_rate_hour") @db.Decimal(10, 2)
   contactPerson   String?  @map("contact_person")
   contactPhone    String?  @map("contact_phone")

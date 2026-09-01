@@ -36,17 +36,31 @@ function decryptUser(user: any) {
     email: decryptDeterministic(user.email),
     firstName: decryptRandomized(user.firstName),
     lastName: decryptRandomized(user.lastName),
+    phoneNumber: decryptRandomized(user.phoneNumber),
   };
+  
+  // Universally strip sensitive password hash to guarantee absolute security
+  delete decrypted.passwordHash;
+
   if (decrypted.guardProfile) {
     decrypted.guardProfile = {
       ...decrypted.guardProfile,
+      firstName: decryptRandomized(decrypted.guardProfile.firstName),
+      lastName: decryptRandomized(decrypted.guardProfile.lastName),
       phoneNumber: decryptRandomized(decrypted.guardProfile.phoneNumber),
+      siaLicenceNumber: decryptRandomized(decrypted.guardProfile.siaLicenceNumber),
+      rtwDocumentType: decryptRandomized(decrypted.guardProfile.rtwDocumentType),
+      rtwDocumentUrl: decryptRandomized(decrypted.guardProfile.rtwDocumentUrl),
+      emergencyContactName: decryptRandomized(decrypted.guardProfile.emergencyContactName),
+      emergencyContactPhone: decryptRandomized(decrypted.guardProfile.emergencyContactPhone),
     };
   }
   if (decrypted.clientProfile) {
     decrypted.clientProfile = {
       ...decrypted.clientProfile,
       companyName: decryptRandomized(decrypted.clientProfile.companyName),
+      billingAddress: decryptRandomized(decrypted.clientProfile.billingAddress),
+      logoUrl: decryptRandomized(decrypted.clientProfile.logoUrl),
       contactPerson: decryptRandomized(decrypted.clientProfile.contactPerson),
       contactPhone: decryptRandomized(decrypted.clientProfile.contactPhone),
     };
@@ -77,10 +91,19 @@ export const registerGuard = async (req: Request, res: Response): Promise<void> 
         passwordHash: hashedPassword,
         firstName: encryptRandomized(data.firstName),
         lastName: encryptRandomized(data.lastName),
+        phoneNumber: encryptRandomized(data.phoneNumber),
         role: Role.GUARD,
         guardProfile: {
           create: {
-            phoneNumber: data.phoneNumber ? encryptRandomized(data.phoneNumber) : null,
+            firstName: encryptRandomized(data.firstName),
+            lastName: encryptRandomized(data.lastName),
+            phoneNumber: encryptRandomized(data.phoneNumber),
+            siaLicenceNumber: data.siaLicenceNumber ? encryptRandomized(data.siaLicenceNumber) : null,
+            siaExpiryDate: data.siaExpiryDate || null,
+            rtwDocumentType: data.rtwDocumentType ? encryptRandomized(data.rtwDocumentType) : null,
+            rightToWorkExpiryDate: data.rtwExpiryDate || null,
+            hasIndefiniteRTW: data.hasIndefiniteRtw || false,
+            rtwDocumentUrl: data.rtwDocumentUrl ? encryptRandomized(data.rtwDocumentUrl) : null,
           },
         },
       },
@@ -123,6 +146,8 @@ export const registerClient = async (req: Request, res: Response): Promise<void>
         clientProfile: {
           create: {
             companyName: encryptRandomized(data.companyName),
+            billingAddress: encryptRandomized(data.billingAddress),
+            logoUrl: data.logoUrl ? encryptRandomized(data.logoUrl) : null,
             contactPerson: encryptRandomized(`${data.firstName} ${data.lastName}`),
             contactPhone: data.phoneNumber ? encryptRandomized(data.phoneNumber) : null,
             slug: data.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
@@ -236,13 +261,7 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
 
     const user = await prisma.user.findUnique({
       where: { id: userReq.user.userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        isActive: true,
+      include: {
         guardProfile: true,
         clientProfile: true,
       },
@@ -390,3 +409,5 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
   }
 };
+
+

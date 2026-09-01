@@ -36,3 +36,6 @@ lerna-debug.log*
 # OS metadata files
 .DS_Store
 Thumbs.db
+
+# Testing suites & temporary test databases
+src/tests/

@@ -14,8 +14,9 @@ export const prisma = new PrismaClient({
 async function runMigrations(): Promise<void> {
   logger.info('Checking and running database migrations...');
   try {
-    // Directly run the local Prisma build entry point with node to avoid relying on global `npx`
-    const { stdout, stderr } = await execAsync('node node_modules/prisma/build/index.js migrate deploy');
+    // Use process.execPath to get the absolute path of the running node binary on the server
+    const nodeBinaryPath = process.execPath;
+    const { stdout, stderr } = await execAsync(`"${nodeBinaryPath}" node_modules/prisma/build/index.js migrate deploy`);
     if (stdout) {
       logger.info(`Prisma Migrate:\n${stdout.trim()}`);
     }

@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.12.1",
-    "argon2": "^0.45.1",
+    "@node-rs/argon2": "^2.2.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

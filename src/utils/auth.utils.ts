@@ -1,4 +1,4 @@
-import argon2 from 'argon2';
+import { hash, verify } from '@node-rs/argon2';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
@@ -11,8 +11,7 @@ const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
  * Hash a password using Argon2id
  */
 export async function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, {
-    type: argon2.argon2id,
+  return hash(password, {
     memoryCost: 2 ** 16, // 64 MB
     timeCost: 3,
     parallelism: 1,
@@ -22,9 +21,9 @@ export async function hashPassword(password: string): Promise<string> {
 /**
  * Verify a password against a hash using Argon2
  */
-export async function verifyPassword(hash: string, password: string): Promise<boolean> {
+export async function verifyPassword(hashedVal: string, password: string): Promise<boolean> {
   try {
-    return await argon2.verify(hash, password);
+    return await verify(hashedVal, password);
   } catch (error) {
     return false;
   }

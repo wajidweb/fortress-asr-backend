@@ -4,6 +4,7 @@ import { encryptDeterministic, encryptRandomized } from '../utils/crypto';
 import { hashPassword } from '../utils/auth.utils';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -14,17 +15,29 @@ export const prisma = new PrismaClient({
 async function runMigrations(): Promise<void> {
   logger.info('Checking and running database migrations...');
   try {
-    // Use process.execPath to get the absolute path of the running node binary on the server
+    // Resolve absolute path to the project root directory
+    const projectRoot = path.resolve(__dirname, '../..');
     const nodeBinaryPath = process.execPath;
-    const { stdout, stderr } = await execAsync(`"${nodeBinaryPath}" node_modules/prisma/build/index.js migrate deploy`);
+    const prismaScript = path.resolve(projectRoot, 'node_modules/prisma/build/index.js');
+
+    logger.info(`Resolved paths for migrations -> Project Root: ${projectRoot} | Node Binary: ${nodeBinaryPath} | Prisma Script: ${prismaScript}`);
+
+    // Execute Prisma with dynamic absolute pathing, explicit cwd, and inherited env variables
+    const { stdout, stderr } = await execAsync(`"${nodeBinaryPath}" "${prismaScript}" migrate deploy`, {
+      cwd: projectRoot,
+      env: { ...process.env },
+    });
+
     if (stdout) {
       logger.info(`Prisma Migrate:\n${stdout.trim()}`);
     }
     if (stderr) {
       logger.warn(`Prisma Migrate Warning:\n${stderr.trim()}`);
     }
-  } catch (error) {
-    logger.error('Failed to run database migrations programmatically. Make sure you have database access and Prisma installed.', error);
+  } catch (error: any) {
+    const stdoutLog = error.stdout ? `\n--- PRISMA STDOUT ---\n${error.stdout}` : '';
+    const stderrLog = error.stderr ? `\n--- PRISMA STDERR ---\n${error.stderr}` : '';
+    logger.error(`Failed to run database migrations programmatically. Error details: ${error.message}${stdoutLog}${stderrLog}`, error);
     throw error;
   }
 }

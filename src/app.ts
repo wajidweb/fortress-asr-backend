@@ -11,6 +11,9 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
+// Enable trust proxy for secure reverse-proxies (like Hostinger) to support rate-limiters
+app.set('trust proxy', 1);
+
 // Security and HTTP Request middlewares
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));

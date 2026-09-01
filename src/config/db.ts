@@ -102,8 +102,12 @@ async function ensureSuperAdmin() {
 
 export const connectDatabase = async (): Promise<void> => {
   try {
-    // Run database migrations programmatically
-    await runMigrations();
+    // Run database migrations programmatically (non-blocking for restricted hosting environments)
+    try {
+      await runMigrations();
+    } catch (migError) {
+      logger.warn('Programmatic database migrations failed/skipped. This is common in restricted hosting environments (like Hostinger Shared/Cloud Node.js containers) which block spawning compiler-engine processes. Proceeding to connect to the database. If tables are missing, please run "npx prisma migrate deploy" via Hostinger SSH or from your local machine connected to the remote database.');
+    }
 
     await prisma.$connect();
     logger.info('MySQL Database successfully connected via Prisma ORM.');

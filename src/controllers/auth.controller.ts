@@ -19,10 +19,10 @@ import {
   loginSchema,
   registerGuardSchema,
   registerClientSchema,
-  refreshTokenSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
 } from '../validators/auth.validator';
+import { sendPasswordResetEmail } from '../services/mail.service';
 import { Role } from '@prisma/client';
 import { z } from 'zod';
 
@@ -356,6 +356,9 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
         expiresAt: new Date(Date.now() + 15 * 60 * 1000), 
       },
     });
+
+    // Send the password reset email asynchronously
+    await sendPasswordResetEmail(data.email, resetToken);
 
     res.json({ message: 'If the email exists, a password reset link has been sent.' });
   } catch (error) {

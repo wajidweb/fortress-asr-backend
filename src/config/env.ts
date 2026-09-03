@@ -19,4 +19,10 @@ export const env = {
   RTW_EXPIRY_WARNING_DAYS: (process.env.RTW_EXPIRY_WARNING_DAYS || '90,60,30')
     .split(',')
     .map(Number),
+  SMTP_HOST: process.env.SMTP_HOST || 'smtp.hostinger.com',
+  SMTP_PORT: parseInt(process.env.SMTP_PORT || '465', 10),
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  FROM_EMAIL: process.env.FROM_EMAIL || 'no-reply@fortressasrsecurity.com',
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
 };

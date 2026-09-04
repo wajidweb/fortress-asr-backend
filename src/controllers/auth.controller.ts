@@ -22,7 +22,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
 } from '../validators/auth.validator';
-import { sendPasswordResetEmail } from '../services/mail.service';
+import { sendPasswordResetEmail, sendVerificationEmail } from '../services/mail.service';
 import { Role } from '@prisma/client';
 import { z } from 'zod';
 
@@ -109,7 +109,23 @@ export const registerGuard = async (req: Request, res: Response): Promise<void> 
       },
     });
 
-    res.status(201).json({ message: 'Guard registered successfully', userId: user.id });
+    const verificationToken = generateSecureToken();
+    const hashedVerificationToken = hashToken(verificationToken);
+
+    await prisma.emailVerificationToken.create({
+      data: {
+        tokenHash: hashedVerificationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      },
+    });
+
+    await sendVerificationEmail(data.email, verificationToken);
+
+    res.status(201).json({ 
+      message: 'Guard registered successfully. Please check your email to verify your account.', 
+      userId: user.id 
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors });
@@ -156,7 +172,23 @@ export const registerClient = async (req: Request, res: Response): Promise<void>
       },
     });
 
-    res.status(201).json({ message: 'Client registered successfully', userId: user.id });
+    const verificationToken = generateSecureToken();
+    const hashedVerificationToken = hashToken(verificationToken);
+
+    await prisma.emailVerificationToken.create({
+      data: {
+        tokenHash: hashedVerificationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      },
+    });
+
+    await sendVerificationEmail(data.email, verificationToken);
+
+    res.status(201).json({ 
+      message: 'Client registered successfully. Please check your email to verify your account.', 
+      userId: user.id 
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors });
@@ -189,6 +221,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     if (!isPasswordValid) {
       res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+
+    if (!user.isEmailVerified) {
+      res.status(401).json({ 
+        error: 'Please verify your email address before logging in.',
+        isEmailVerified: false 
+      });
       return;
     }
 
@@ -412,5 +452,94 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
   }
 };
+
+export const verifyEmail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      res.status(400).json({ error: 'Token is required' });
+      return;
+    }
+
+    const hashedToken = hashToken(token);
+
+    const storedToken = await prisma.emailVerificationToken.findUnique({
+      where: { tokenHash: hashedToken },
+      include: { user: true },
+    });
+
+    if (!storedToken || storedToken.usedAt || storedToken.expiresAt < new Date()) {
+      res.status(400).json({ error: 'Invalid or expired verification token' });
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: storedToken.userId },
+        data: { isEmailVerified: true },
+      }),
+      prisma.emailVerificationToken.update({
+        where: { id: storedToken.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    res.json({ message: 'Email verified successfully. You can now log in.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const resendVerification = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+
+    const encryptedEmail = encryptDeterministic(email);
+
+    const user = await prisma.user.findUnique({
+      where: { email: encryptedEmail },
+    });
+
+    if (!user) {
+      // Return a success message even if user doesn't exist for security reasons (prevent enumeration)
+      res.json({ message: 'If the email exists and is unverified, a new verification link has been sent.' });
+      return;
+    }
+
+    if (user.isEmailVerified) {
+      res.status(400).json({ error: 'This email is already verified. You can log in.' });
+      return;
+    }
+
+    // Generate secure token
+    const verificationToken = generateSecureToken();
+    const hashedVerificationToken = hashToken(verificationToken);
+
+    // Expire any existing verification tokens for this user
+    await prisma.emailVerificationToken.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data: { expiresAt: new Date() },
+    });
+
+    await prisma.emailVerificationToken.create({
+      data: {
+        tokenHash: hashedVerificationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      },
+    });
+
+    await sendVerificationEmail(email, verificationToken);
+
+    res.json({ message: 'If the email exists and is unverified, a new verification link has been sent.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 
 

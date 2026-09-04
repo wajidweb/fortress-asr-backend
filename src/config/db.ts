@@ -57,6 +57,7 @@ async function ensureSuperAdmin() {
         firstName: encryptRandomized('Super'),
         lastName: encryptRandomized('Admin'),
         role: Role.SUPER_ADMIN,
+        isEmailVerified: true,
       },
     });
     logger.info('Encrypted Super Admin created successfully.');

@@ -9,6 +9,8 @@ import {
   refresh,
   forgotPassword,
   resetPassword,
+  verifyEmail,
+  resendVerification,
 } from '../controllers/auth.controller';
 import { requireAuth } from '../middlewares/auth.middleware';
 
@@ -38,6 +40,8 @@ router.post('/logout', logout);
 router.post('/refresh', refresh);
 router.post('/forgot-password', authLimiter, forgotPassword);
 router.post('/reset-password', authLimiter, resetPassword);
+router.post('/verify-email', authLimiter, verifyEmail);
+router.post('/resend-verification', authLimiter, resendVerification);
 
 // Protected routes
 router.get('/me', requireAuth, getMe);

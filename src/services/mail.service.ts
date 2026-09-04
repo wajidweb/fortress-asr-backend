@@ -193,3 +193,139 @@ This link is valid for 15 minutes. If you did not request this, please ignore th
     html,
   });
 }
+
+/**
+ * Dispatch email verification instructions to a newly registered user
+ */
+export async function sendVerificationEmail(email: string, token: string): Promise<boolean> {
+  const verificationUrl = `${env.FRONTEND_URL}/verify-email?token=${token}`;
+
+  const subject = 'Fortress ASR - Email Verification';
+  
+  const text = `Thank you for registering an account with Fortress ASR. 
+Please copy and paste the following link into your browser to verify your email address:
+${verificationUrl}
+
+This link is valid for 24 hours. If you did not create this account, please ignore this email.`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Email Verification</title>
+      <style>
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background-color: #f8fafc;
+          margin: 0;
+          padding: 0;
+          color: #1e293b;
+        }
+        .container {
+          max-width: 600px;
+          margin: 40px auto;
+          background-color: #ffffff;
+          border-radius: 8px;
+          overflow: hidden;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+          border: 1px solid #e2e8f0;
+        }
+        .header {
+          background-color: #032031;
+          color: #ffffff;
+          padding: 30px;
+          text-align: center;
+        }
+        .header h1 {
+          margin: 0;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -0.025em;
+          text-transform: uppercase;
+        }
+        .content {
+          padding: 40px 30px;
+          line-height: 1.6;
+        }
+        .content p {
+          margin-top: 0;
+          margin-bottom: 20px;
+          font-size: 16px;
+        }
+        .btn-container {
+          text-align: center;
+          margin: 30px 0;
+        }
+        .btn {
+          display: inline-block;
+          background-color: #032031;
+          color: #ffffff !important;
+          text-decoration: none;
+          padding: 14px 30px;
+          font-size: 14px;
+          font-weight: 700;
+          text-transform: uppercase;
+          border-radius: 4px;
+          letter-spacing: 0.05em;
+          transition: background-color 0.2s ease;
+        }
+        .btn:hover {
+          background-color: #000000;
+        }
+        .link-text {
+          word-break: break-all;
+          font-size: 12px;
+          color: #64748b;
+          background-color: #f1f5f9;
+          padding: 10px;
+          border-radius: 4px;
+          border: 1px dashed #cbd5e1;
+          margin-top: 25px;
+        }
+        .footer {
+          background-color: #f1f5f9;
+          padding: 20px 30px;
+          text-align: center;
+          font-size: 12px;
+          color: #64748b;
+          border-top: 1px solid #e2e8f0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Fortress ASR Security</h1>
+        </div>
+        <div class="content">
+          <p>Hello,</p>
+          <p>Thank you for registering an account with the Fortress ASR Security Operations Management system.</p>
+          <p>To verify your email address and activate your account, please click the secure button below:</p>
+          <div class="btn-container">
+            <a href="${verificationUrl}" class="btn">Verify Email Address</a>
+          </div>
+          <p><em>Please note that this verification link is valid for <strong>24 hours</strong>.</em></p>
+          <p>If you did not register for this account, please disregard this email, and no further action is required.</p>
+          <div class="link-text">
+            <strong>Having trouble with the button?</strong> Copy and paste this URL into your web browser:<br>
+            <a href="${verificationUrl}">${verificationUrl}</a>
+          </div>
+        </div>
+        <div class="footer">
+          &copy; 2026 Fortress ASR Security. All rights reserved.<br>
+          This is an automated operational notification. Please do not reply to this email.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendMail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+}
+

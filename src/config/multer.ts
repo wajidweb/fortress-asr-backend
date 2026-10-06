@@ -35,4 +35,70 @@ export const upload = multer({
   }
 });
 
+// Configure local uploads directory for corporate client logos
+const logoUploadDir = path.join(__dirname, '../../uploads/client-logos');
+if (!fs.existsSync(logoUploadDir)) {
+  fs.mkdirSync(logoUploadDir, { recursive: true });
+}
+
+// Configure local uploads directory for guard profile photos
+const guardPhotoUploadDir = path.join(__dirname, '../../uploads/guard-photos');
+if (!fs.existsSync(guardPhotoUploadDir)) {
+  fs.mkdirSync(guardPhotoUploadDir, { recursive: true });
+}
+
+const logoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, logoUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'logo-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+export const logoUpload = multer({
+  storage: logoStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB Limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|webp|svg/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname || mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid image type. Only JPG, PNG, WEBP, and SVG are allowed.'));
+    }
+  }
+});
+
+const guardUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (file.fieldname === 'photo') {
+      cb(null, guardPhotoUploadDir);
+    } else {
+      cb(null, uploadDir);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+export const guardUpload = multer({
+  storage: guardUploadStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|webp|pdf/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname || mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Allowed formats: JPG, PNG, WEBP, and PDF.'));
+    }
+  }
+});
+
 export default upload;

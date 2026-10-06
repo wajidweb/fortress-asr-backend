@@ -29,6 +29,7 @@ function decryptUser(user: any) {
       siaLicenceNumber: decrypted.guardProfile.siaLicenceNumber ? decryptRandomized(decrypted.guardProfile.siaLicenceNumber) : null,
       rtwDocumentType: decrypted.guardProfile.rtwDocumentType ? decryptRandomized(decrypted.guardProfile.rtwDocumentType) : null,
       rtwDocumentUrl: decrypted.guardProfile.rtwDocumentUrl ? decryptRandomized(decrypted.guardProfile.rtwDocumentUrl) : null,
+      profilePictureUrl: decrypted.guardProfile.profilePictureUrl || null,
       emergencyContactName: decrypted.guardProfile.emergencyContactName ? decryptRandomized(decrypted.guardProfile.emergencyContactName) : null,
       emergencyContactPhone: decrypted.guardProfile.emergencyContactPhone ? decryptRandomized(decrypted.guardProfile.emergencyContactPhone) : null,
     };
@@ -46,19 +47,36 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // Process multipart inputs (Casts boolean string and attaches multer file path link if uploaded)
+    // Process multipart inputs (Casts boolean string and attaches multer file path links if uploaded)
     const rawBody = { ...req.body };
     
     if (rawBody.hasIndefiniteRtw !== undefined) {
       rawBody.hasIndefiniteRtw = rawBody.hasIndefiniteRtw === 'true' || rawBody.hasIndefiniteRtw === true;
     }
     
-    // If a document was successfully uploaded, save its local path
-    if (req.file) {
-      rawBody.rtwDocumentUrl = `/uploads/rtw-documents/${req.file.filename}`;
+    // Handle both files from multer.fields and fallback multer.single
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    if (files) {
+      if (files['rtwDocument'] && files['rtwDocument'][0]) {
+        rawBody.rtwDocumentUrl = `/uploads/rtw-documents/${files['rtwDocument'][0].filename}`;
+      }
+      if (files['photo'] && files['photo'][0]) {
+        rawBody.profilePictureUrl = `/uploads/guard-photos/${files['photo'][0].filename}`;
+      }
+    } else if (req.file) {
+      if (req.file.fieldname === 'photo') {
+        rawBody.profilePictureUrl = `/uploads/guard-photos/${req.file.filename}`;
+      } else {
+        rawBody.rtwDocumentUrl = `/uploads/rtw-documents/${req.file.filename}`;
+      }
     }
 
     const data = updateGuardProfileSchema.parse(rawBody);
+
+    let finalProfilePictureUrl: string | null | undefined = undefined;
+    if (data.profilePictureUrl !== undefined) {
+      finalProfilePictureUrl = data.profilePictureUrl ? data.profilePictureUrl.trim() : null;
+    }
 
     // Sync PII details (First Name, Last Name, and Phone Number) to the main User credential record if updated
     if (data.firstName || data.lastName || data.phoneNumber) {
@@ -72,7 +90,7 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
       });
     }
 
-    // Update or create Guard Profile details in SQL, securely encrypting all PII at rest (including file link!)
+    // Update or create Guard Profile details in SQL, securely encrypting all PII at rest
     await prisma.guardProfile.upsert({
       where: { userId: userAuth.userId },
       create: {
@@ -86,6 +104,7 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
         rightToWorkExpiryDate: data.rtwExpiryDate,
         hasIndefiniteRTW: data.hasIndefiniteRtw,
         rtwDocumentUrl: encryptRandomized(data.rtwDocumentUrl),
+        profilePictureUrl: finalProfilePictureUrl || null,
       },
       update: {
         firstName: data.firstName ? encryptRandomized(data.firstName) : undefined,
@@ -97,6 +116,7 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
         rightToWorkExpiryDate: data.rtwExpiryDate,
         hasIndefiniteRTW: data.hasIndefiniteRtw,
         rtwDocumentUrl: encryptRandomized(data.rtwDocumentUrl),
+        profilePictureUrl: finalProfilePictureUrl !== undefined ? finalProfilePictureUrl : undefined,
       },
     });
 

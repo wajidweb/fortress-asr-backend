@@ -51,18 +51,24 @@ export function decryptUser(user: any) {
       siaLicenceNumber: decrypted.guardProfile.siaLicenceNumber ? decryptRandomized(decrypted.guardProfile.siaLicenceNumber) : null,
       rtwDocumentType: decrypted.guardProfile.rtwDocumentType ? decryptRandomized(decrypted.guardProfile.rtwDocumentType) : null,
       rtwDocumentUrl: decrypted.guardProfile.rtwDocumentUrl ? decryptRandomized(decrypted.guardProfile.rtwDocumentUrl) : null,
+      profilePictureUrl: decrypted.guardProfile.profilePictureUrl || null,
       emergencyContactName: decrypted.guardProfile.emergencyContactName ? decryptRandomized(decrypted.guardProfile.emergencyContactName) : null,
       emergencyContactPhone: decrypted.guardProfile.emergencyContactPhone ? decryptRandomized(decrypted.guardProfile.emergencyContactPhone) : null,
     };
   }
   if (decrypted.clientProfile) {
+    const rawProfile = decrypted.clientProfile;
+    const urlSlug = rawProfile.urlSlug || rawProfile.slug || '';
     decrypted.clientProfile = {
-      ...decrypted.clientProfile,
-      companyName: decrypted.clientProfile.companyName ? decryptRandomized(decrypted.clientProfile.companyName) : '',
-      billingAddress: decrypted.clientProfile.billingAddress ? decryptRandomized(decrypted.clientProfile.billingAddress) : '',
-      logoUrl: decrypted.clientProfile.logoUrl ? decryptRandomized(decrypted.clientProfile.logoUrl) : null,
-      contactPerson: decrypted.clientProfile.contactPerson ? decryptRandomized(decrypted.clientProfile.contactPerson) : null,
-      contactPhone: decrypted.clientProfile.contactPhone ? decryptRandomized(decrypted.clientProfile.contactPhone) : null,
+      ...rawProfile,
+      companyName: rawProfile.companyName ? decryptRandomized(rawProfile.companyName) : '',
+      billingAddress: rawProfile.billingAddress ? decryptRandomized(rawProfile.billingAddress) : '',
+      logoUrl: rawProfile.logoUrl ? decryptRandomized(rawProfile.logoUrl) : null,
+      contactPerson: rawProfile.contactPerson ? decryptRandomized(rawProfile.contactPerson) : null,
+      contactPhone: rawProfile.contactPhone ? decryptRandomized(rawProfile.contactPhone) : null,
+      urlSlug,
+      slug: urlSlug,
+      createdAt: rawProfile.createdAt,
     };
   }
   return decrypted;

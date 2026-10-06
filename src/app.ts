@@ -16,7 +16,11 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Security and HTTP Request middlewares
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -34,8 +38,16 @@ app.use('/api/guard', guardRoutes);
 app.use('/api/client', clientRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Expose secure local file upload scans as static resources
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Expose secure local file upload scans as static resources with cross-origin headers
+app.use(
+  '/uploads',
+  express.static(path.join(__dirname, '../uploads'), {
+    setHeaders: (res) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    },
+  })
+);
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

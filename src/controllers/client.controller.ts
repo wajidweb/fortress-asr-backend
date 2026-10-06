@@ -15,7 +15,12 @@ export const updateClientProfile = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const data = updateClientProfileSchema.parse(req.body);
+    const rawBody = { ...req.body };
+    if (req.file) {
+      rawBody.logoUrl = `/uploads/client-logos/${req.file.filename}`;
+    }
+
+    const data = updateClientProfileSchema.parse(rawBody);
 
     // Sync user names and phone number on the User record
     if (data.firstName !== undefined || data.lastName !== undefined || data.phoneNumber !== undefined) {
@@ -29,27 +34,26 @@ export const updateClientProfile = async (req: Request, res: Response): Promise<
       });
     }
 
-    // Generate clean URL-safe slug from company name
-    let slug = data.companyName
+    // Generate or format URL-friendly path slug (max 100 chars, lowercase, alphanumeric and hyphens)
+    const baseSlug = (data.urlSlug || data.companyName)
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    
-    if (!slug) {
-      slug = `client-${userAuth.userId.slice(0, 8)}`;
-    }
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 90);
 
-    // Check if slug belongs to another client
+    let slug = baseSlug || `client-${userAuth.userId.slice(0, 8)}`;
+
+    // Ensure URL slug uniqueness across clients
     const existingClient = await prisma.clientProfile.findFirst({
       where: {
-        slug,
+        urlSlug: slug,
         NOT: { userId: userAuth.userId },
       },
     });
 
     if (existingClient) {
-      slug = `${slug}-${userAuth.userId.slice(0, 6)}`;
+      slug = `${slug.slice(0, 90)}-${userAuth.userId.slice(0, 6)}`;
     }
 
     const contactPerson = data.contactPerson 
@@ -58,25 +62,32 @@ export const updateClientProfile = async (req: Request, res: Response): Promise<
     
     const contactPhone = data.contactPhone || data.phoneNumber || null;
 
-    // Upsert ClientProfile record
+    let finalLogoUrl: string | null | undefined = undefined;
+    if (req.file) {
+      finalLogoUrl = `/uploads/client-logos/${req.file.filename}`;
+    } else if (data.logoUrl !== undefined) {
+      finalLogoUrl = data.logoUrl ? data.logoUrl.trim() : null;
+    }
+
+    // Upsert ClientProfile record with official corporate specifications
     await prisma.clientProfile.upsert({
       where: { userId: userAuth.userId },
       create: {
         userId: userAuth.userId,
-        companyName: encryptRandomized(data.companyName),
-        billingAddress: encryptRandomized(data.billingAddress),
-        slug,
+        companyName: data.companyName.trim(),
+        billingAddress: encryptRandomized(data.billingAddress.trim()),
+        urlSlug: slug,
         contactPerson: contactPerson ? encryptRandomized(contactPerson) : null,
         contactPhone: contactPhone ? encryptRandomized(contactPhone) : null,
-        logoUrl: data.logoUrl ? encryptRandomized(data.logoUrl) : null,
+        logoUrl: finalLogoUrl || null,
       },
       update: {
-        companyName: encryptRandomized(data.companyName),
-        billingAddress: encryptRandomized(data.billingAddress),
-        slug,
+        companyName: data.companyName.trim(),
+        billingAddress: encryptRandomized(data.billingAddress.trim()),
+        urlSlug: slug,
         contactPerson: contactPerson ? encryptRandomized(contactPerson) : undefined,
         contactPhone: contactPhone ? encryptRandomized(contactPhone) : undefined,
-        logoUrl: data.logoUrl ? encryptRandomized(data.logoUrl) : undefined,
+        logoUrl: finalLogoUrl !== undefined ? finalLogoUrl : undefined,
       },
     });
 

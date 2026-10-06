@@ -21,6 +21,13 @@ enum GuardStatus {
   INACTIVE
 }
 
+enum ClientStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
 enum ShiftStatus {
   SCHEDULED
   PENDING_CONFIRMATION
@@ -86,6 +93,7 @@ model GuardProfile {
   status                GuardStatus @default(PENDING_APPROVAL)
   payRatePerHour        Decimal     @default(0.00) @map("pay_rate_per_hour") @db.Decimal(10, 2)
   phoneNumber           String?     @map("phone_number")
+  profilePictureUrl     String?     @map("profile_picture_url") @db.VarChar(512)
   emergencyContactName  String?     @map("emergency_contact_name")
   emergencyContactPhone String?     @map("emergency_contact_phone")
   createdAt             DateTime    @default(now()) @map("created_at")
@@ -106,11 +114,12 @@ model GuardProfile {
 model ClientProfile {
   id              String   @id @default(uuid())
   userId          String   @unique @map("user_id")
-  companyName     String   @map("company_name")
-  slug            String   @unique // For route isolation: /client/{client-unique-slug}
-  billingAddress  String   @map("billing_address") @db.Text
-  logoUrl         String?  @map("logo_url")
-  billingRateHour Decimal  @default(0.00) @map("billing_rate_hour") @db.Decimal(10, 2)
+  companyName     String   @map("company_name") @db.VarChar(150)
+  urlSlug         String   @unique @map("url_slug") @db.VarChar(100) // URL friendly path slug for path routing separation
+  billingAddress  String       @map("billing_address") @db.Text
+  logoUrl         String?      @map("logo_url") @db.VarChar(512)
+  status          ClientStatus @default(PENDING_APPROVAL)
+  billingRateHour Decimal      @default(0.00) @map("billing_rate_hour") @db.Decimal(10, 2)
   contactPerson   String?  @map("contact_person")
   contactPhone    String?  @map("contact_phone")
   createdAt       DateTime @default(now()) @map("created_at")

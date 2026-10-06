@@ -7,6 +7,7 @@ import path from 'path';
 import { errorHandler } from './middlewares/error.middleware';
 import authRoutes from './routes/auth.routes';
 import guardRoutes from './routes/guard.routes';
+import clientRoutes from './routes/client.routes';
 import adminRoutes from './routes/admin.routes';
 
 const app = express();
@@ -30,6 +31,7 @@ if (process.env.NODE_ENV === 'development') {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/guard', guardRoutes);
+app.use('/api/client', clientRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Expose secure local file upload scans as static resources

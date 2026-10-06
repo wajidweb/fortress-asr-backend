@@ -12,9 +12,9 @@ function decryptUser(user: any) {
   const decrypted = {
     ...user,
     email: decryptDeterministic(user.email),
-    firstName: decryptRandomized(user.firstName),
-    lastName: decryptRandomized(user.lastName),
-    phoneNumber: decryptRandomized(user.phoneNumber),
+    firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+    lastName: user.lastName ? decryptRandomized(user.lastName) : '',
+    phoneNumber: user.phoneNumber ? decryptRandomized(user.phoneNumber) : null,
   };
   
   // Universally strip sensitive password hash to guarantee absolute security
@@ -23,14 +23,14 @@ function decryptUser(user: any) {
   if (decrypted.guardProfile) {
     decrypted.guardProfile = {
       ...decrypted.guardProfile,
-      firstName: decryptRandomized(decrypted.guardProfile.firstName),
-      lastName: decryptRandomized(decrypted.guardProfile.lastName),
-      phoneNumber: decryptRandomized(decrypted.guardProfile.phoneNumber),
-      siaLicenceNumber: decryptRandomized(decrypted.guardProfile.siaLicenceNumber),
-      rtwDocumentType: decryptRandomized(decrypted.guardProfile.rtwDocumentType),
-      rtwDocumentUrl: decryptRandomized(decrypted.guardProfile.rtwDocumentUrl),
-      emergencyContactName: decryptRandomized(decrypted.guardProfile.emergencyContactName),
-      emergencyContactPhone: decryptRandomized(decrypted.guardProfile.emergencyContactPhone),
+      firstName: decrypted.guardProfile.firstName ? decryptRandomized(decrypted.guardProfile.firstName) : '',
+      lastName: decrypted.guardProfile.lastName ? decryptRandomized(decrypted.guardProfile.lastName) : '',
+      phoneNumber: decrypted.guardProfile.phoneNumber ? decryptRandomized(decrypted.guardProfile.phoneNumber) : null,
+      siaLicenceNumber: decrypted.guardProfile.siaLicenceNumber ? decryptRandomized(decrypted.guardProfile.siaLicenceNumber) : null,
+      rtwDocumentType: decrypted.guardProfile.rtwDocumentType ? decryptRandomized(decrypted.guardProfile.rtwDocumentType) : null,
+      rtwDocumentUrl: decrypted.guardProfile.rtwDocumentUrl ? decryptRandomized(decrypted.guardProfile.rtwDocumentUrl) : null,
+      emergencyContactName: decrypted.guardProfile.emergencyContactName ? decryptRandomized(decrypted.guardProfile.emergencyContactName) : null,
+      emergencyContactPhone: decrypted.guardProfile.emergencyContactPhone ? decryptRandomized(decrypted.guardProfile.emergencyContactPhone) : null,
     };
   }
   return decrypted;
@@ -72,10 +72,22 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
       });
     }
 
-    // Update Guard Profile details in SQL, securely encrypting all PII at rest (including file link!)
-    await prisma.guardProfile.update({
+    // Update or create Guard Profile details in SQL, securely encrypting all PII at rest (including file link!)
+    await prisma.guardProfile.upsert({
       where: { userId: userAuth.userId },
-      data: {
+      create: {
+        userId: userAuth.userId,
+        firstName: data.firstName ? encryptRandomized(data.firstName) : '',
+        lastName: data.lastName ? encryptRandomized(data.lastName) : '',
+        phoneNumber: encryptRandomized(data.phoneNumber),
+        siaLicenceNumber: encryptRandomized(data.siaLicenceNumber),
+        siaExpiryDate: data.siaExpiryDate,
+        rtwDocumentType: encryptRandomized(data.rtwDocumentType),
+        rightToWorkExpiryDate: data.rtwExpiryDate,
+        hasIndefiniteRTW: data.hasIndefiniteRtw,
+        rtwDocumentUrl: encryptRandomized(data.rtwDocumentUrl),
+      },
+      update: {
         firstName: data.firstName ? encryptRandomized(data.firstName) : undefined,
         lastName: data.lastName ? encryptRandomized(data.lastName) : undefined,
         phoneNumber: encryptRandomized(data.phoneNumber),

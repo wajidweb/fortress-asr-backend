@@ -29,14 +29,14 @@ import { z } from 'zod';
 /**
  * Decrypt a user object and its nested profiles for API response
  */
-function decryptUser(user: any) {
+export function decryptUser(user: any) {
   if (!user) return user;
   const decrypted = {
     ...user,
     email: decryptDeterministic(user.email),
-    firstName: decryptRandomized(user.firstName),
-    lastName: decryptRandomized(user.lastName),
-    phoneNumber: decryptRandomized(user.phoneNumber),
+    firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+    lastName: user.lastName ? decryptRandomized(user.lastName) : '',
+    phoneNumber: user.phoneNumber ? decryptRandomized(user.phoneNumber) : null,
   };
   
   // Universally strip sensitive password hash to guarantee absolute security
@@ -45,24 +45,24 @@ function decryptUser(user: any) {
   if (decrypted.guardProfile) {
     decrypted.guardProfile = {
       ...decrypted.guardProfile,
-      firstName: decryptRandomized(decrypted.guardProfile.firstName),
-      lastName: decryptRandomized(decrypted.guardProfile.lastName),
-      phoneNumber: decryptRandomized(decrypted.guardProfile.phoneNumber),
-      siaLicenceNumber: decryptRandomized(decrypted.guardProfile.siaLicenceNumber),
-      rtwDocumentType: decryptRandomized(decrypted.guardProfile.rtwDocumentType),
-      rtwDocumentUrl: decryptRandomized(decrypted.guardProfile.rtwDocumentUrl),
-      emergencyContactName: decryptRandomized(decrypted.guardProfile.emergencyContactName),
-      emergencyContactPhone: decryptRandomized(decrypted.guardProfile.emergencyContactPhone),
+      firstName: decrypted.guardProfile.firstName ? decryptRandomized(decrypted.guardProfile.firstName) : '',
+      lastName: decrypted.guardProfile.lastName ? decryptRandomized(decrypted.guardProfile.lastName) : '',
+      phoneNumber: decrypted.guardProfile.phoneNumber ? decryptRandomized(decrypted.guardProfile.phoneNumber) : null,
+      siaLicenceNumber: decrypted.guardProfile.siaLicenceNumber ? decryptRandomized(decrypted.guardProfile.siaLicenceNumber) : null,
+      rtwDocumentType: decrypted.guardProfile.rtwDocumentType ? decryptRandomized(decrypted.guardProfile.rtwDocumentType) : null,
+      rtwDocumentUrl: decrypted.guardProfile.rtwDocumentUrl ? decryptRandomized(decrypted.guardProfile.rtwDocumentUrl) : null,
+      emergencyContactName: decrypted.guardProfile.emergencyContactName ? decryptRandomized(decrypted.guardProfile.emergencyContactName) : null,
+      emergencyContactPhone: decrypted.guardProfile.emergencyContactPhone ? decryptRandomized(decrypted.guardProfile.emergencyContactPhone) : null,
     };
   }
   if (decrypted.clientProfile) {
     decrypted.clientProfile = {
       ...decrypted.clientProfile,
-      companyName: decryptRandomized(decrypted.clientProfile.companyName),
-      billingAddress: decryptRandomized(decrypted.clientProfile.billingAddress),
-      logoUrl: decryptRandomized(decrypted.clientProfile.logoUrl),
-      contactPerson: decryptRandomized(decrypted.clientProfile.contactPerson),
-      contactPhone: decryptRandomized(decrypted.clientProfile.contactPhone),
+      companyName: decrypted.clientProfile.companyName ? decryptRandomized(decrypted.clientProfile.companyName) : '',
+      billingAddress: decrypted.clientProfile.billingAddress ? decryptRandomized(decrypted.clientProfile.billingAddress) : '',
+      logoUrl: decrypted.clientProfile.logoUrl ? decryptRandomized(decrypted.clientProfile.logoUrl) : null,
+      contactPerson: decrypted.clientProfile.contactPerson ? decryptRandomized(decrypted.clientProfile.contactPerson) : null,
+      contactPhone: decrypted.clientProfile.contactPhone ? decryptRandomized(decrypted.clientProfile.contactPhone) : null,
     };
   }
   return decrypted;
@@ -89,21 +89,13 @@ export const registerGuard = async (req: Request, res: Response): Promise<void> 
       data: {
         email: encryptedEmail,
         passwordHash: hashedPassword,
-        firstName: encryptRandomized(data.firstName),
-        lastName: encryptRandomized(data.lastName),
-        phoneNumber: encryptRandomized(data.phoneNumber),
+        firstName: '',
+        lastName: '',
         role: Role.GUARD,
         guardProfile: {
           create: {
-            firstName: encryptRandomized(data.firstName),
-            lastName: encryptRandomized(data.lastName),
-            phoneNumber: encryptRandomized(data.phoneNumber),
-            siaLicenceNumber: data.siaLicenceNumber ? encryptRandomized(data.siaLicenceNumber) : null,
-            siaExpiryDate: data.siaExpiryDate || null,
-            rtwDocumentType: data.rtwDocumentType ? encryptRandomized(data.rtwDocumentType) : null,
-            rightToWorkExpiryDate: data.rtwExpiryDate || null,
-            hasIndefiniteRTW: data.hasIndefiniteRtw || false,
-            rtwDocumentUrl: data.rtwDocumentUrl ? encryptRandomized(data.rtwDocumentUrl) : null,
+            firstName: '',
+            lastName: '',
           },
         },
       },
@@ -156,19 +148,9 @@ export const registerClient = async (req: Request, res: Response): Promise<void>
       data: {
         email: encryptedEmail,
         passwordHash: hashedPassword,
-        firstName: encryptRandomized(data.firstName),
-        lastName: encryptRandomized(data.lastName),
+        firstName: '',
+        lastName: '',
         role: Role.CLIENT,
-        clientProfile: {
-          create: {
-            companyName: encryptRandomized(data.companyName),
-            billingAddress: encryptRandomized(data.billingAddress),
-            logoUrl: data.logoUrl ? encryptRandomized(data.logoUrl) : null,
-            contactPerson: encryptRandomized(`${data.firstName} ${data.lastName}`),
-            contactPhone: data.phoneNumber ? encryptRandomized(data.phoneNumber) : null,
-            slug: data.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-          },
-        },
       },
     });
 
@@ -193,10 +175,6 @@ export const registerClient = async (req: Request, res: Response): Promise<void>
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors });
     } else {
-      if ((error as any).code === 'P2002') {
-         res.status(400).json({ error: 'Company name results in a slug that already exists. Please choose a slightly different name.' });
-         return;
-      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -258,8 +236,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       user: {
         id: user.id,
         email: decryptDeterministic(user.email),
-        firstName: decryptRandomized(user.firstName),
-        lastName: decryptRandomized(user.lastName),
+        firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+        lastName: user.lastName ? decryptRandomized(user.lastName) : '',
         role: user.role,
       },
     });

@@ -53,6 +53,27 @@ enum IncidentStatus {
   CLOSED
 }
 
+enum ServiceRequestType {
+  NEW_SITE_DEPLOYMENT
+  EXTRA_GUARD_COVERAGE
+  SCHEDULE_CHANGE
+  SPECIAL_EVENT
+}
+
+enum ServiceRequestStatus {
+  PENDING_REVIEW
+  UNDER_ASSESSMENT
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ServiceRequestUrgency {
+  STANDARD
+  PRIORITY
+  EMERGENCY
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -126,34 +147,79 @@ model ClientProfile {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sites Site[]
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sites           Site[]
+  serviceRequests SiteServiceRequest[]
 
   @@map("client_profiles")
 }
 
 model Site {
-  id                  String   @id @default(uuid())
-  clientId            String   @map("client_id")
-  name                String
-  address             String
-  latitude            Decimal  @db.Decimal(10, 8)
-  longitude           Decimal  @db.Decimal(11, 8)
-  geofenceRadiusMeter Int      @default(100) @map("geofence_radius_meter") // Geofencing threshold
-  siteInstructions    String?  @map("site_instructions") @db.Text
-  emergencyContact    String?  @map("emergency_contact")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                   String                @id @default(uuid())
+  clientId             String                @map("client_id")
+  name                 String                @db.VarChar(150)
+  address              String                @db.Text
+  latitude             Decimal               @db.Decimal(9, 6)
+  longitude            Decimal               @db.Decimal(9, 6)
+  geofenceRadiusMeters Int                   @default(100) @map("geofence_radius_meters") // Circular validation threshold for check-ins
+  siteInstructions     String?               @map("site_instructions") @db.Text
+  emergencyContact     String?               @map("emergency_contact")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
 
   // Relations
-  client       ClientProfile @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  shifts       Shift[]
-  patrolRoutes PatrolRoute[]
-  incidents    Incident[]
-  dobEntries   DobEntry[]
+  client          ClientProfile         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  shifts          Shift[]
+  patrolRoutes    PatrolRoute[]
+  incidents       Incident[]
+  dobEntries      DobEntry[]
+  serviceRequests SiteServiceRequest[]
 
   @@index([clientId])
   @@map("sites")
+}
+
+model SiteServiceRequest {
+  id                    String                @id @default(uuid())
+  clientId              String                @map("client_id")
+  siteId                String?               @map("site_id")
+  
+  type                  ServiceRequestType    @default(NEW_SITE_DEPLOYMENT)
+  status                ServiceRequestStatus  @default(PENDING_REVIEW)
+  urgency               ServiceRequestUrgency @default(STANDARD)
+  
+  // Property details (provided by client)
+  propertyName          String                @map("property_name") @db.VarChar(150)
+  propertyAddress       String                @map("property_address") @db.Text
+  city                  String?               @db.VarChar(100)
+  postcode              String?               @db.VarChar(20)
+  suggestedLatitude     Decimal?              @map("suggested_latitude") @db.Decimal(9, 6)
+  suggestedLongitude    Decimal?              @map("suggested_longitude") @db.Decimal(9, 6)
+  
+  // Operational requirements
+  requiredGuardsCount   Int                   @default(1) @map("required_guards_count")
+  serviceStartDate      DateTime              @map("service_start_date")
+  serviceEndDate        DateTime?             @map("service_end_date")
+  shiftScheduleNotes    String?               @map("shift_schedule_notes") @db.Text
+  specialInstructions   String?               @map("special_instructions") @db.Text
+  emergencyContactName  String?               @map("emergency_contact_name")
+  emergencyContactPhone String?               @map("emergency_contact_phone")
+  
+  // Admin review & audit
+  adminFeedbackNotes    String?               @map("admin_feedback_notes") @db.Text
+  reviewedByUserId      String?               @map("reviewed_by_user_id")
+  reviewedAt            DateTime?             @map("reviewed_at")
+
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  // Relations
+  client                ClientProfile         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  site                  Site?                 @relation(fields: [siteId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([siteId])
+  @@map("site_service_requests")
 }
 
 model Shift {

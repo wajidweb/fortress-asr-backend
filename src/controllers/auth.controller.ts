@@ -194,6 +194,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const user = await prisma.user.findUnique({
       where: { email: encryptedEmail },
+      include: {
+        guardProfile: true,
+        clientProfile: true,
+      },
     });
 
     if (!user || !user.isActive) {
@@ -239,13 +243,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     res.json({
       accessToken,
-      user: {
-        id: user.id,
-        email: decryptDeterministic(user.email),
-        firstName: user.firstName ? decryptRandomized(user.firstName) : '',
-        lastName: user.lastName ? decryptRandomized(user.lastName) : '',
-        role: user.role,
-      },
+      user: decryptUser(user),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

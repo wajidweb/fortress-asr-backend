@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { 
   getGuards, approveGuard, rejectGuard,
-  getClients, approveClient, rejectClient 
+  getClients, approveClient, rejectClient,
+  getSiteServiceRequests, getSiteServiceRequestById,
+  assessSiteServiceRequest, approveSiteServiceRequest, rejectSiteServiceRequest,
+  getAllSites, updateSite
 } from '../controllers/admin.controller';
 import { requireAuth, requireRole } from '../middlewares/auth.middleware';
 import { Role } from '@prisma/client';
@@ -25,5 +28,16 @@ router.put('/clients/:id/approve', requireAuth, requireRole([Role.SUPER_ADMIN, R
 
 // Reject (suspend) a Client profile status
 router.put('/clients/:id/reject', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), rejectClient);
+
+// Site Service Requests Management
+router.get('/requests', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), getSiteServiceRequests);
+router.get('/requests/:id', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), getSiteServiceRequestById);
+router.put('/requests/:id/assess', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), assessSiteServiceRequest);
+router.post('/requests/:id/approve', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), approveSiteServiceRequest);
+router.put('/requests/:id/reject', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), rejectSiteServiceRequest);
+
+// Monitored Sites (Properties Geofences)
+router.get('/sites', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), getAllSites);
+router.put('/sites/:id', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), updateSite);
 
 export default router;

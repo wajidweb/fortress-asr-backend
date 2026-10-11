@@ -1,7 +1,14 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { decryptRandomized, decryptDeterministic } from '../utils/crypto';
-import { GuardStatus, ClientStatus, Role } from '@prisma/client';
+import { GuardStatus, ClientStatus, Role, ServiceRequestStatus, ServiceRequestUrgency, ServiceRequestType, ShiftStatus } from '@prisma/client';
+import { 
+  approveSiteServiceRequestSchema,
+  assessSiteServiceRequestSchema,
+  rejectSiteServiceRequestSchema,
+  updateSiteSchema 
+} from '../validators/site-request.validator';
+import { z } from 'zod';
 
 /**
  * Helper to decrypt a Guard Profile completely before returning to Admins for audits
@@ -52,14 +59,18 @@ function decryptClientProfile(profile: any) {
 }
 
 /**
- * Fetch all Guard Profiles with optional status filtering for Admin audits
+ * Fetch Guard Profiles with status filtering, search & pagination for Admin audits
  */
 export const getGuards = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status } = req.query;
+    const { status, search } = req.query;
+    const isExport = req.query.export === 'true';
 
-    const guards = await prisma.guardProfile.findMany({
-      where: status ? { status: status as GuardStatus } : undefined,
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = isExport ? 1000 : Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+
+    // Fetch all guard profiles to perform accurate decrypted search, status counts & pagination
+    const allGuards = await prisma.guardProfile.findMany({
       include: {
         user: true,
       },
@@ -68,9 +79,49 @@ export const getGuards = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    const decryptedGuards = guards.map(decryptGuardProfile);
+    const decryptedAll = allGuards.map(decryptGuardProfile);
 
-    res.json({ guards: decryptedGuards });
+    // Compute status stats across all roster guards
+    const stats = {
+      total: decryptedAll.length,
+      pendingApproval: decryptedAll.filter((g) => g.status === GuardStatus.PENDING_APPROVAL).length,
+      active: decryptedAll.filter((g) => g.status === GuardStatus.ACTIVE).length,
+      suspended: decryptedAll.filter((g) => g.status === GuardStatus.SUSPENDED).length,
+    };
+
+    // Apply status filter
+    let filtered = status && status !== 'ALL'
+      ? decryptedAll.filter((g) => g.status === (status as GuardStatus))
+      : decryptedAll;
+
+    // Apply search filter on decrypted attributes (names, email, phone, SIA license number)
+    if (search && typeof search === 'string' && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter((g) => {
+        const name = `${g.firstName || g.user?.firstName || ''} ${g.lastName || g.user?.lastName || ''}`.toLowerCase();
+        const email = (g.user?.email || '').toLowerCase();
+        const phone = (g.phoneNumber || g.user?.phoneNumber || '').toLowerCase();
+        const sia = (g.siaLicenceNumber || '').toLowerCase();
+        return name.includes(q) || email.includes(q) || phone.includes(q) || sia.includes(q);
+      });
+    }
+
+    const totalCount = filtered.length;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+    const paginatedGuards = isExport
+      ? filtered
+      : filtered.slice((page - 1) * limit, page * limit);
+
+    res.json({
+      guards: paginatedGuards,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages,
+      },
+      stats,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error while fetching guard profiles' });
   }
@@ -129,11 +180,15 @@ export const rejectGuard = async (req: Request, res: Response): Promise<void> =>
 };
 
 /**
- * Fetch all Client accounts and profiles with optional status filtering for Admin audits
+ * Fetch all Client accounts and profiles with status filtering, search & pagination for Admin audits
  */
 export const getClients = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status } = req.query;
+    const { status, search } = req.query;
+    const isExport = req.query.export === 'true';
+
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = isExport ? 1000 : Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
 
     // Fetch all client users with their profiles and sites
     const clientUsers = await prisma.user.findMany({
@@ -194,12 +249,50 @@ export const getClients = async (req: Request, res: Response): Promise<void> => 
       };
     });
 
+    // Compute stats across all corporate clients
+    const stats = {
+      total: decryptedClients.length,
+      pendingApproval: decryptedClients.filter((c) => c.status === ClientStatus.PENDING_APPROVAL).length,
+      active: decryptedClients.filter((c) => c.status === ClientStatus.ACTIVE).length,
+      suspended: decryptedClients.filter((c) => c.status === ClientStatus.SUSPENDED).length,
+    };
+
     // Apply optional status filtering (?status=PENDING_APPROVAL | ACTIVE | SUSPENDED)
-    const filteredClients = status && status !== 'ALL'
+    let filteredClients = status && status !== 'ALL'
       ? decryptedClients.filter((c) => c.status === status)
       : decryptedClients;
 
-    res.json({ clients: filteredClients });
+    // Apply search filter on decrypted attributes (companyName, email, contactPerson, representative names, slug)
+    if (search && typeof search === 'string' && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filteredClients = filteredClients.filter((c) => {
+        const company = (c.companyName || '').toLowerCase();
+        const email = (c.user?.email || '').toLowerCase();
+        const contact = (c.contactPerson || '').toLowerCase();
+        const repName = `${c.user?.firstName || ''} ${c.user?.lastName || ''}`.toLowerCase();
+        const phone = (c.contactPhone || c.user?.phoneNumber || '').toLowerCase();
+        const address = (c.billingAddress || '').toLowerCase();
+        const slug = (c.urlSlug || '').toLowerCase();
+        return company.includes(q) || email.includes(q) || contact.includes(q) || repName.includes(q) || phone.includes(q) || address.includes(q) || slug.includes(q);
+      });
+    }
+
+    const totalCount = filteredClients.length;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+    const paginatedClients = isExport
+      ? filteredClients
+      : filteredClients.slice((page - 1) * limit, page * limit);
+
+    res.json({
+      clients: paginatedClients,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages,
+      },
+      stats,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error while fetching client records' });
   }
@@ -318,5 +411,469 @@ export const rejectClient = async (req: Request, res: Response): Promise<void> =
     res.status(404).json({ error: 'Client record not found' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error during client suspension' });
+  }
+};
+
+/**
+ * Retrieve all Client Site Service Requests for Operations Management with Pagination & Stats
+ */
+export const getSiteServiceRequests = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { status, urgency, clientId, type, search } = req.query;
+
+    const isExport = req.query.export === 'true' || req.query.all === 'true';
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = isExport ? 10000 : Math.max(1, Math.min(100, parseInt(req.query.limit as string, 10) || 10));
+    const skip = isExport ? 0 : (page - 1) * limit;
+
+    const whereClause: any = {};
+    if (status && status !== 'ALL') {
+      whereClause.status = status as ServiceRequestStatus;
+    }
+    if (urgency && urgency !== 'ALL') {
+      whereClause.urgency = urgency as ServiceRequestUrgency;
+    }
+    if (clientId) {
+      whereClause.clientId = String(clientId);
+    }
+    if (type && type !== 'ALL') {
+      whereClause.type = type as ServiceRequestType;
+    }
+
+    if (search && typeof search === 'string' && search.trim() !== '') {
+      const q = search.trim();
+      whereClause.OR = [
+        { propertyName: { contains: q } },
+        { propertyAddress: { contains: q } },
+        { city: { contains: q } },
+        { postcode: { contains: q } },
+        { client: { companyName: { contains: q } } },
+      ];
+    }
+
+    const [totalCount, requests, totalAll, pendingCount, assessmentCount, approvedCount] = await Promise.all([
+      prisma.siteServiceRequest.count({ where: whereClause }),
+      prisma.siteServiceRequest.findMany({
+        where: whereClause,
+        include: {
+          client: {
+            include: {
+              user: true,
+            },
+          },
+          site: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.siteServiceRequest.count(),
+      prisma.siteServiceRequest.count({ where: { status: ServiceRequestStatus.PENDING_REVIEW } }),
+      prisma.siteServiceRequest.count({ where: { status: ServiceRequestStatus.UNDER_ASSESSMENT } }),
+      prisma.siteServiceRequest.count({ where: { status: ServiceRequestStatus.APPROVED } }),
+    ]);
+
+    const formattedRequests = requests.map((reqItem) => ({
+      ...reqItem,
+      client: reqItem.client ? decryptClientProfile(reqItem.client) : null,
+    }));
+
+    res.json({
+      requests: formattedRequests,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit) || 1,
+      },
+      stats: {
+        total: totalAll,
+        pendingReview: pendingCount,
+        underAssessment: assessmentCount,
+        approved: approvedCount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve site service requests' });
+  }
+};
+
+/**
+ * Retrieve single Site Service Request by ID
+ */
+export const getSiteServiceRequestById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const request = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+      include: {
+        client: {
+          include: {
+            user: true,
+          },
+        },
+        site: true,
+      },
+    });
+
+    if (!request) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    res.json({
+      request: {
+        ...request,
+        client: request.client ? decryptClientProfile(request.client) : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve service request details' });
+  }
+};
+
+/**
+ * Mark request as UNDER_ASSESSMENT and record supervisor notes
+ */
+export const assessSiteServiceRequest = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = assessSiteServiceRequestSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    const updated = await prisma.siteServiceRequest.update({
+      where: { id },
+      data: {
+        status: ServiceRequestStatus.UNDER_ASSESSMENT,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes || existingRequest.adminFeedbackNotes,
+        reviewedByUserId: userAuth?.userId || null,
+        reviewedAt: new Date(),
+      },
+      include: {
+        client: { include: { user: true } },
+        site: true,
+      },
+    });
+
+    res.json({
+      message: 'Service request moved to assessment stage',
+      request: {
+        ...updated,
+        client: updated.client ? decryptClientProfile(updated.client) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to update request assessment' });
+    }
+  }
+};
+
+/**
+ * Approve Site Service Request and Provision Official Physical Site with Geofence Centerpoint
+ */
+export const approveSiteServiceRequest = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = approveSiteServiceRequestSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+      include: { client: true },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    if (existingRequest.status === ServiceRequestStatus.APPROVED) {
+      res.status(400).json({ error: 'Service request is already approved' });
+      return;
+    }
+
+    // Run transaction: create Site, update request, and write AuditLog
+    const result = await prisma.$transaction(async (tx) => {
+      let provisionedSiteId = existingRequest.siteId;
+
+      if (!provisionedSiteId) {
+        // Create new physical site geofence entry
+        const newSite = await tx.site.create({
+          data: {
+            clientId: existingRequest.clientId,
+            name: existingRequest.propertyName,
+            address: existingRequest.propertyAddress,
+            latitude: parsedData.latitude,
+            longitude: parsedData.longitude,
+            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
+            siteInstructions: parsedData.siteInstructions || existingRequest.specialInstructions || null,
+            emergencyContact: parsedData.emergencyContact || (existingRequest.emergencyContactName ? `${existingRequest.emergencyContactName} - ${existingRequest.emergencyContactPhone || ''}`.trim() : null),
+          },
+        });
+        provisionedSiteId = newSite.id;
+      } else {
+        // Update existing site geofence if values provided
+        await tx.site.update({
+          where: { id: provisionedSiteId },
+          data: {
+            latitude: parsedData.latitude,
+            longitude: parsedData.longitude,
+            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
+            siteInstructions: parsedData.siteInstructions !== undefined ? parsedData.siteInstructions : undefined,
+            emergencyContact: parsedData.emergencyContact !== undefined ? parsedData.emergencyContact : undefined,
+          },
+        });
+      }
+
+      // Update Service Request status
+      const updatedRequest = await tx.siteServiceRequest.update({
+        where: { id },
+        data: {
+          status: ServiceRequestStatus.APPROVED,
+          siteId: provisionedSiteId,
+          adminFeedbackNotes: parsedData.adminFeedbackNotes || 'Site approved and geofence provisioned successfully.',
+          reviewedByUserId: userAuth?.userId || null,
+          reviewedAt: new Date(),
+        },
+        include: {
+          site: true,
+          client: { include: { user: true } },
+        },
+      });
+
+      // Audit Log
+      await tx.auditLog.create({
+        data: {
+          userId: userAuth?.userId || null,
+          action: 'SITE_REQUEST_APPROVED_AND_PROVISIONED',
+          details: JSON.stringify({
+            requestId: id,
+            siteId: provisionedSiteId,
+            siteName: existingRequest.propertyName,
+            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
+          }),
+        },
+      });
+
+      return updatedRequest;
+    });
+
+    res.json({
+      message: 'Site service request approved and property geofence provisioned successfully',
+      request: {
+        ...result,
+        client: result.client ? decryptClientProfile(result.client) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to approve and provision site request' });
+    }
+  }
+};
+
+/**
+ * Reject Site Service Request with feedback
+ */
+export const rejectSiteServiceRequest = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = rejectSiteServiceRequestSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    const updated = await prisma.siteServiceRequest.update({
+      where: { id },
+      data: {
+        status: ServiceRequestStatus.REJECTED,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes,
+        reviewedByUserId: userAuth?.userId || null,
+        reviewedAt: new Date(),
+      },
+      include: {
+        client: { include: { user: true } },
+        site: true,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: userAuth?.userId || null,
+        action: 'SITE_REQUEST_REJECTED',
+        details: JSON.stringify({
+          requestId: id,
+          reason: parsedData.adminFeedbackNotes,
+        }),
+      },
+    });
+
+    res.json({
+      message: 'Site service request rejected',
+      request: {
+        ...updated,
+        client: updated.client ? decryptClientProfile(updated.client) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to reject site service request' });
+    }
+  }
+};
+
+/**
+ * Retrieve all Sites across all clients for Admin Site Management
+ */
+export const getAllSites = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { clientId } = req.query;
+
+    const whereClause: any = {};
+    if (clientId) {
+      whereClause.clientId = String(clientId);
+    }
+
+    const sites = await prisma.site.findMany({
+      where: whereClause,
+      include: {
+        client: {
+          select: {
+            id: true,
+            companyName: true,
+            logoUrl: true,
+            urlSlug: true,
+          },
+        },
+        shifts: {
+          where: {
+            status: ShiftStatus.CHECKED_IN,
+          },
+          select: {
+            id: true,
+            guard: {
+              select: {
+                firstName: true,
+                lastName: true,
+                profilePictureUrl: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            shifts: true,
+            patrolRoutes: true,
+            incidents: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const formattedSites = sites.map((site) => ({
+      id: site.id,
+      name: site.name,
+      address: site.address,
+      latitude: site.latitude,
+      longitude: site.longitude,
+      geofenceRadiusMeters: site.geofenceRadiusMeters,
+      siteInstructions: site.siteInstructions,
+      emergencyContact: site.emergencyContact,
+      client: {
+        id: site.client.id,
+        companyName: decryptRandomized(site.client.companyName),
+        logoUrl: site.client.logoUrl,
+        urlSlug: site.client.urlSlug,
+      },
+      activeOfficersCount: site.shifts.length,
+      activeShifts: site.shifts.map((s) => ({
+        id: s.id,
+        guard: {
+          firstName: decryptRandomized(s.guard.firstName),
+          lastName: decryptRandomized(s.guard.lastName),
+          profilePictureUrl: s.guard.profilePictureUrl,
+        },
+      })),
+      totalShifts: site._count.shifts,
+      totalPatrolRoutes: site._count.patrolRoutes,
+      totalIncidents: site._count.incidents,
+      createdAt: site.createdAt,
+      updatedAt: site.updatedAt,
+    }));
+
+    res.json({ sites: formattedSites });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve physical sites' });
+  }
+};
+
+/**
+ * Update an existing site (geofence, instructions, emergency contacts)
+ */
+export const updateSite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const parsedData = updateSiteSchema.parse(req.body);
+
+    const existingSite = await prisma.site.findUnique({
+      where: { id },
+    });
+
+    if (!existingSite) {
+      res.status(404).json({ error: 'Site not found' });
+      return;
+    }
+
+    const updated = await prisma.site.update({
+      where: { id },
+      data: {
+        name: parsedData.name !== undefined ? parsedData.name.trim() : undefined,
+        address: parsedData.address !== undefined ? parsedData.address.trim() : undefined,
+        latitude: parsedData.latitude !== undefined ? parsedData.latitude : undefined,
+        longitude: parsedData.longitude !== undefined ? parsedData.longitude : undefined,
+        geofenceRadiusMeters: parsedData.geofenceRadiusMeters !== undefined ? parsedData.geofenceRadiusMeters : undefined,
+        siteInstructions: parsedData.siteInstructions !== undefined ? parsedData.siteInstructions : undefined,
+        emergencyContact: parsedData.emergencyContact !== undefined ? parsedData.emergencyContact : undefined,
+      },
+    });
+
+    res.json({
+      message: 'Site updated successfully',
+      site: updated,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to update site' });
+    }
   }
 };

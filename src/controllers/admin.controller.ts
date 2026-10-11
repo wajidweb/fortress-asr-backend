@@ -9,6 +9,7 @@ import {
   updateSiteSchema 
 } from '../validators/site-request.validator';
 import { z } from 'zod';
+import { recordAuditLog, getAuditLogs, getAuditLogById } from '../services/audit.service';
 
 /**
  * Helper to decrypt a Guard Profile completely before returning to Admins for audits
@@ -132,7 +133,18 @@ export const getGuards = async (req: Request, res: Response): Promise<void> => {
  */
 export const approveGuard = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userAuth = (req as any).user;
     const { id } = req.params;
+
+    const existingGuard = await prisma.guardProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+
+    if (!existingGuard) {
+      res.status(404).json({ error: 'Guard profile not found' });
+      return;
+    }
 
     const profile = await prisma.guardProfile.update({
       where: { id },
@@ -142,6 +154,20 @@ export const approveGuard = async (req: Request, res: Response): Promise<void> =
       include: {
         user: true,
       },
+    });
+
+    const guardName = `${decryptRandomized(profile.firstName)} ${decryptRandomized(profile.lastName)}`.trim() || 'Officer';
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'GUARD_APPROVED',
+      entityType: 'GUARD',
+      entityId: profile.id,
+      entityName: guardName,
+      summary: `Approved guard application for ${guardName} (Status set to ACTIVE)`,
+      previousValues: { status: existingGuard.status },
+      newValues: { status: GuardStatus.ACTIVE },
+      reason: 'Application approved by Super Admin',
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
     });
 
     res.json({ 
@@ -158,7 +184,18 @@ export const approveGuard = async (req: Request, res: Response): Promise<void> =
  */
 export const rejectGuard = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userAuth = (req as any).user;
     const { id } = req.params;
+
+    const existingGuard = await prisma.guardProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+
+    if (!existingGuard) {
+      res.status(404).json({ error: 'Guard profile not found' });
+      return;
+    }
 
     const profile = await prisma.guardProfile.update({
       where: { id },
@@ -168,6 +205,20 @@ export const rejectGuard = async (req: Request, res: Response): Promise<void> =>
       include: {
         user: true,
       },
+    });
+
+    const guardName = `${decryptRandomized(profile.firstName)} ${decryptRandomized(profile.lastName)}`.trim() || 'Officer';
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'GUARD_SUSPENDED',
+      entityType: 'GUARD',
+      entityId: profile.id,
+      entityName: guardName,
+      summary: `Suspended guard application for ${guardName} (Status set to SUSPENDED)`,
+      previousValues: { status: existingGuard.status },
+      newValues: { status: GuardStatus.SUSPENDED },
+      reason: 'Application rejected / suspended by Super Admin',
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
     });
 
     res.json({ 
@@ -303,6 +354,7 @@ export const getClients = async (req: Request, res: Response): Promise<void> => 
  */
 export const approveClient = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userAuth = (req as any).user;
     const { id } = req.params;
 
     let clientProfile = await prisma.clientProfile.findFirst({
@@ -313,6 +365,8 @@ export const approveClient = async (req: Request, res: Response): Promise<void> 
     });
 
     if (clientProfile) {
+      const companyName = clientProfile.companyName ? decryptRandomized(clientProfile.companyName) : 'Corporate Client';
+
       const updated = await prisma.clientProfile.update({
         where: { id: clientProfile.id },
         data: {
@@ -324,6 +378,25 @@ export const approveClient = async (req: Request, res: Response): Promise<void> 
       await prisma.user.update({
         where: { id: updated.userId },
         data: { isActive: true },
+      });
+
+      await recordAuditLog({
+        userId: userAuth?.userId || null,
+        action: 'CLIENT_APPROVED',
+        entityType: 'CLIENT',
+        entityId: clientProfile.id,
+        entityName: companyName,
+        summary: `Approved client company ${companyName} (Status set to ACTIVE)`,
+        previousValues: {
+          status: clientProfile.status,
+          isActive: clientProfile.user?.isActive ?? false,
+        },
+        newValues: {
+          status: ClientStatus.ACTIVE,
+          isActive: true,
+        },
+        reason: 'Client company approved by Super Admin',
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
       });
 
       res.json({
@@ -339,11 +412,26 @@ export const approveClient = async (req: Request, res: Response): Promise<void> 
         where: { id },
         data: { isActive: true },
       });
+
+      const userEmail = decryptDeterministic(user.email);
+      await recordAuditLog({
+        userId: userAuth?.userId || null,
+        action: 'CLIENT_APPROVED',
+        entityType: 'CLIENT',
+        entityId: user.id,
+        entityName: userEmail,
+        summary: `Activated client user ${userEmail}`,
+        previousValues: { isActive: user.isActive },
+        newValues: { isActive: true },
+        reason: 'Client activated by Super Admin',
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+      });
+
       res.json({
         message: 'Client user marked as active',
         user: {
           id: user.id,
-          email: decryptDeterministic(user.email),
+          email: userEmail,
           isActive: true,
         },
       });
@@ -361,6 +449,7 @@ export const approveClient = async (req: Request, res: Response): Promise<void> 
  */
 export const rejectClient = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userAuth = (req as any).user;
     const { id } = req.params;
 
     let clientProfile = await prisma.clientProfile.findFirst({
@@ -371,6 +460,8 @@ export const rejectClient = async (req: Request, res: Response): Promise<void> =
     });
 
     if (clientProfile) {
+      const companyName = clientProfile.companyName ? decryptRandomized(clientProfile.companyName) : 'Corporate Client';
+
       const updated = await prisma.clientProfile.update({
         where: { id: clientProfile.id },
         data: {
@@ -382,6 +473,25 @@ export const rejectClient = async (req: Request, res: Response): Promise<void> =
       await prisma.user.update({
         where: { id: updated.userId },
         data: { isActive: false },
+      });
+
+      await recordAuditLog({
+        userId: userAuth?.userId || null,
+        action: 'CLIENT_SUSPENDED',
+        entityType: 'CLIENT',
+        entityId: clientProfile.id,
+        entityName: companyName,
+        summary: `Suspended client company ${companyName} (Status set to SUSPENDED)`,
+        previousValues: {
+          status: clientProfile.status,
+          isActive: clientProfile.user?.isActive ?? true,
+        },
+        newValues: {
+          status: ClientStatus.SUSPENDED,
+          isActive: false,
+        },
+        reason: 'Client company suspended by Super Admin',
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
       });
 
       res.json({
@@ -397,11 +507,26 @@ export const rejectClient = async (req: Request, res: Response): Promise<void> =
         where: { id },
         data: { isActive: false },
       });
+
+      const userEmail = decryptDeterministic(user.email);
+      await recordAuditLog({
+        userId: userAuth?.userId || null,
+        action: 'CLIENT_SUSPENDED',
+        entityType: 'CLIENT',
+        entityId: user.id,
+        entityName: userEmail,
+        summary: `Suspended client user ${userEmail}`,
+        previousValues: { isActive: user.isActive },
+        newValues: { isActive: false },
+        reason: 'Client suspended by Super Admin',
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+      });
+
       res.json({
         message: 'Client user marked as suspended',
         user: {
           id: user.id,
-          email: decryptDeterministic(user.email),
+          email: userEmail,
           isActive: false,
         },
       });
@@ -566,6 +691,25 @@ export const assessSiteServiceRequest = async (req: Request, res: Response): Pro
       },
     });
 
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_REQUEST_ASSESSED',
+      entityType: 'SERVICE_REQUEST',
+      entityId: id,
+      entityName: existingRequest.propertyName,
+      summary: `Moved site request for ${existingRequest.propertyName} to Assessment`,
+      previousValues: {
+        status: existingRequest.status,
+        adminFeedbackNotes: existingRequest.adminFeedbackNotes,
+      },
+      newValues: {
+        status: ServiceRequestStatus.UNDER_ASSESSMENT,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes || existingRequest.adminFeedbackNotes,
+      },
+      reason: parsedData.adminFeedbackNotes || 'Under Assessment',
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+    });
+
     res.json({
       message: 'Service request moved to assessment stage',
       request: {
@@ -607,7 +751,7 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
       return;
     }
 
-    // Run transaction: create Site, update request, and write AuditLog
+    // Run transaction: create Site, update request, and write encrypted AuditLog
     const result = await prisma.$transaction(async (tx) => {
       let provisionedSiteId = existingRequest.siteId;
 
@@ -656,18 +800,31 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
         },
       });
 
-      // Audit Log
-      await tx.auditLog.create({
-        data: {
-          userId: userAuth?.userId || null,
-          action: 'SITE_REQUEST_APPROVED_AND_PROVISIONED',
-          details: JSON.stringify({
-            requestId: id,
-            siteId: provisionedSiteId,
-            siteName: existingRequest.propertyName,
-            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
-          }),
+      // Encrypted Audit Log
+      await recordAuditLog({
+        userId: userAuth?.userId || null,
+        action: 'SITE_REQUEST_APPROVED_AND_PROVISIONED',
+        entityType: 'SERVICE_REQUEST',
+        entityId: id,
+        entityName: existingRequest.propertyName,
+        summary: `Approved site service request and provisioned geofence for: ${existingRequest.propertyName}`,
+        previousValues: {
+          status: existingRequest.status,
+          siteId: existingRequest.siteId,
         },
+        newValues: {
+          status: ServiceRequestStatus.APPROVED,
+          siteId: provisionedSiteId,
+          geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
+        },
+        metadata: {
+          requestId: id,
+          siteId: provisionedSiteId,
+          siteName: existingRequest.propertyName,
+          geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
+        },
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+        tx,
       });
 
       return updatedRequest;
@@ -722,15 +879,23 @@ export const rejectSiteServiceRequest = async (req: Request, res: Response): Pro
       },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        userId: userAuth?.userId || null,
-        action: 'SITE_REQUEST_REJECTED',
-        details: JSON.stringify({
-          requestId: id,
-          reason: parsedData.adminFeedbackNotes,
-        }),
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_REQUEST_REJECTED',
+      entityType: 'SERVICE_REQUEST',
+      entityId: id,
+      entityName: existingRequest.propertyName,
+      summary: `Rejected site service request for property: ${existingRequest.propertyName}`,
+      previousValues: {
+        status: existingRequest.status,
+        adminFeedbackNotes: existingRequest.adminFeedbackNotes,
       },
+      newValues: {
+        status: ServiceRequestStatus.REJECTED,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes,
+      },
+      reason: parsedData.adminFeedbackNotes,
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
     });
 
     res.json({
@@ -840,6 +1005,7 @@ export const getAllSites = async (req: Request, res: Response): Promise<void> =>
  */
 export const updateSite = async (req: Request, res: Response): Promise<void> => {
   try {
+    const userAuth = (req as any).user;
     const { id } = req.params;
     const parsedData = updateSiteSchema.parse(req.body);
 
@@ -865,6 +1031,34 @@ export const updateSite = async (req: Request, res: Response): Promise<void> => 
       },
     });
 
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_UPDATED',
+      entityType: 'SITE',
+      entityId: id,
+      entityName: updated.name,
+      summary: `Updated property settings & geofence parameters for ${updated.name}`,
+      previousValues: {
+        name: existingSite.name,
+        address: existingSite.address,
+        latitude: existingSite.latitude ? String(existingSite.latitude) : null,
+        longitude: existingSite.longitude ? String(existingSite.longitude) : null,
+        geofenceRadiusMeters: existingSite.geofenceRadiusMeters,
+        siteInstructions: existingSite.siteInstructions,
+        emergencyContact: existingSite.emergencyContact,
+      },
+      newValues: {
+        name: updated.name,
+        address: updated.address,
+        latitude: updated.latitude ? String(updated.latitude) : null,
+        longitude: updated.longitude ? String(updated.longitude) : null,
+        geofenceRadiusMeters: updated.geofenceRadiusMeters,
+        siteInstructions: updated.siteInstructions,
+        emergencyContact: updated.emergencyContact,
+      },
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+    });
+
     res.json({
       message: 'Site updated successfully',
       site: updated,
@@ -875,5 +1069,61 @@ export const updateSite = async (req: Request, res: Response): Promise<void> => 
     } else {
       res.status(500).json({ error: 'Failed to update site' });
     }
+  }
+};
+
+/**
+ * Retrieve Audit Logs with search, status filtering, date range & pagination
+ * All records stored in database are encrypted with AES-256 and decrypted exclusively for authorized Super Admins.
+ */
+export const getAuditLogsController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      page,
+      limit,
+      search,
+      entityType,
+      action,
+      userId,
+      startDate,
+      endDate,
+    } = req.query;
+
+    const isExport = req.query.export === 'true' || req.query.all === 'true';
+
+    const result = await getAuditLogs({
+      page: page ? parseInt(page as string, 10) : 1,
+      limit: limit ? parseInt(limit as string, 10) : 10,
+      search: typeof search === 'string' ? search : undefined,
+      entityType: typeof entityType === 'string' ? entityType : undefined,
+      action: typeof action === 'string' ? action : undefined,
+      userId: typeof userId === 'string' ? userId : undefined,
+      startDate: typeof startDate === 'string' ? startDate : undefined,
+      endDate: typeof endDate === 'string' ? endDate : undefined,
+      exportAll: isExport,
+    });
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve encrypted audit logs' });
+  }
+};
+
+/**
+ * Retrieve single decrypted Audit Log by ID
+ */
+export const getAuditLogByIdController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const log = await getAuditLogById(id);
+    if (!log) {
+      res.status(404).json({ error: 'Audit log entry not found' });
+      return;
+    }
+
+    res.json({ log });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve audit log details' });
   }
 };

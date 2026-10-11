@@ -424,12 +424,14 @@ model EquipmentAssignment {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String?  @map("user_id")
-  action    String // E.g., "SHIFT_OVERLAP_OVERRIDE", "GUARD_SUSPENDED", "CLIENT_CREATED"
-  details   String   @db.Text
-  ipAddress String?  @map("ip_address")
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String   @db.VarChar(512) // E.g., "GUARD_APPROVED", "CLIENT_SUSPENDED", encrypted at rest
+  entityType String?  @map("entity_type") @db.VarChar(255)
+  entityId   String?  @map("entity_id") @db.VarChar(255)
+  details    String   @db.MediumText
+  ipAddress  String?  @map("ip_address") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)

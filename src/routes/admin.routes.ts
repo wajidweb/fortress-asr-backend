@@ -4,7 +4,8 @@ import {
   getClients, approveClient, rejectClient,
   getSiteServiceRequests, getSiteServiceRequestById,
   assessSiteServiceRequest, approveSiteServiceRequest, rejectSiteServiceRequest,
-  getAllSites, updateSite
+  getAllSites, updateSite,
+  getAuditLogsController, getAuditLogByIdController
 } from '../controllers/admin.controller';
 import { requireAuth, requireRole } from '../middlewares/auth.middleware';
 import { Role } from '@prisma/client';
@@ -39,5 +40,9 @@ router.put('/requests/:id/reject', requireAuth, requireRole([Role.SUPER_ADMIN, R
 // Monitored Sites (Properties Geofences)
 router.get('/sites', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), getAllSites);
 router.put('/sites/:id', requireAuth, requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]), updateSite);
+
+// Encrypted Audit Logs (Append-only & Read-Only for Super Admin accountability)
+router.get('/audit-logs', requireAuth, requireRole([Role.SUPER_ADMIN]), getAuditLogsController);
+router.get('/audit-logs/:id', requireAuth, requireRole([Role.SUPER_ADMIN]), getAuditLogByIdController);
 
 export default router;

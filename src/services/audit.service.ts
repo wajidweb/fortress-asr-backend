@@ -205,19 +205,35 @@ export async function recordAuditLog(params: CreateAuditLogParams): Promise<void
 
     const dbClient = tx || prisma;
 
-    await dbClient.auditLog.create({
-      data: {
-        userId: userId || null,
-        action: encryptedAction,
-        entityType: encryptedEntityType,
-        entityId: encryptedEntityId,
-        details: encryptedDetails,
-        ipAddress: encryptedIpAddress,
-      },
-    });
+    try {
+      await dbClient.auditLog.create({
+        data: {
+          userId: userId || null,
+          action: encryptedAction,
+          entityType: encryptedEntityType,
+          entityId: encryptedEntityId,
+          details: encryptedDetails,
+          ipAddress: encryptedIpAddress,
+        },
+      });
+    } catch (insertError: any) {
+      // Graceful fallback if production database hasn't had the migration applied yet
+      const errMsg = insertError?.message || '';
+      if (errMsg.includes('entity_type') || errMsg.includes('entity_id') || insertError?.code === 'P2021' || insertError?.code === 'P2022') {
+        console.warn('audit_logs table missing entity columns in production. Using raw SQL fallback...');
+        await (dbClient as any).$executeRawUnsafe(
+          `INSERT INTO audit_logs (id, user_id, action, details, ip_address, created_at) VALUES (UUID(), ?, ?, ?, ?, NOW())`,
+          userId || null,
+          encryptedAction,
+          encryptedDetails,
+          encryptedIpAddress
+        );
+      } else {
+        throw insertError;
+      }
+    }
   } catch (error) {
-    // Fail-safe: log locally to stdout so an audit failure never silently breaks critical workflows,
-    // but the error is prominently visible in operations logs
+    // Fail-safe: log locally to stdout so an audit failure never silently breaks critical workflows
     console.error('CRITICAL: Failed to write encrypted audit log to database:', error);
   }
 }
@@ -226,59 +242,95 @@ export async function recordAuditLog(params: CreateAuditLogParams): Promise<void
  * Decrypt an audit log record completely for display to authorized administrators
  */
 export function decryptAuditLog(rawLog: any): DecryptedAuditLog {
-  const decryptedAction = decryptRandomized(rawLog.action);
-  let decryptedEntityType = rawLog.entityType ? decryptRandomized(rawLog.entityType) : null;
-  let decryptedEntityId = rawLog.entityId ? decryptRandomized(rawLog.entityId) : null;
-  const decryptedIpAddress = rawLog.ipAddress ? decryptRandomized(rawLog.ipAddress) : null;
+  try {
+    const decryptedAction = rawLog?.action ? decryptRandomized(rawLog.action) : 'UNKNOWN_ACTION';
+    let decryptedEntityType = rawLog?.entityType ? decryptRandomized(rawLog.entityType) : null;
+    let decryptedEntityId = rawLog?.entityId ? decryptRandomized(rawLog.entityId) : null;
+    const decryptedIpAddress = rawLog?.ipAddress ? decryptRandomized(rawLog.ipAddress) : null;
 
-  // Decrypt details text
-  let parsedDetails: Record<string, any> = {};
-  if (rawLog.details) {
-    const decryptedDetailsText = decryptRandomized(rawLog.details);
-    try {
-      parsedDetails = JSON.parse(decryptedDetailsText);
-    } catch {
-      parsedDetails = { raw: decryptedDetailsText };
+    // Decrypt details text
+    let parsedDetails: Record<string, any> = {};
+    if (rawLog?.details) {
+      const decryptedDetailsText = decryptRandomized(rawLog.details);
+      if (decryptedDetailsText) {
+        try {
+          const parsed = JSON.parse(decryptedDetailsText);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            parsedDetails = parsed;
+          } else {
+            parsedDetails = { raw: decryptedDetailsText };
+          }
+        } catch {
+          parsedDetails = { raw: decryptedDetailsText };
+        }
+      }
     }
-  }
 
-  // Fallback for entityType and entityId if legacy records had them inside details
-  if (!decryptedEntityType && parsedDetails.entityType) {
-    decryptedEntityType = parsedDetails.entityType;
-  }
-  if (!decryptedEntityId && parsedDetails.entityId) {
-    decryptedEntityId = parsedDetails.entityId;
-  }
-  if (!decryptedEntityId && parsedDetails.requestId) {
-    decryptedEntityId = parsedDetails.requestId;
-  }
-  if (!decryptedEntityType && parsedDetails.requestId) {
-    decryptedEntityType = 'SERVICE_REQUEST';
-  }
+    if (!parsedDetails || typeof parsedDetails !== 'object' || Array.isArray(parsedDetails)) {
+      parsedDetails = {};
+    }
 
-  // Decrypt User if included
-  let decryptedUser: DecryptedAuditLog['user'] = null;
-  if (rawLog.user) {
-    decryptedUser = {
-      id: rawLog.user.id,
-      email: decryptDeterministic(rawLog.user.email),
-      firstName: rawLog.user.firstName ? decryptRandomized(rawLog.user.firstName) : '',
-      lastName: rawLog.user.lastName ? decryptRandomized(rawLog.user.lastName) : '',
-      role: rawLog.user.role,
+    // Fallback for entityType and entityId if legacy records had them inside details
+    if (!decryptedEntityType && parsedDetails.entityType) {
+      decryptedEntityType = String(parsedDetails.entityType);
+    }
+    if (!decryptedEntityId && parsedDetails.entityId) {
+      decryptedEntityId = String(parsedDetails.entityId);
+    }
+    if (!decryptedEntityId && parsedDetails.requestId) {
+      decryptedEntityId = String(parsedDetails.requestId);
+    }
+    if (!decryptedEntityType && parsedDetails.requestId) {
+      decryptedEntityType = 'SERVICE_REQUEST';
+    }
+
+    // Decrypt User if included
+    let decryptedUser: DecryptedAuditLog['user'] = null;
+    if (rawLog?.user) {
+      try {
+        decryptedUser = {
+          id: rawLog.user.id,
+          email: rawLog.user.email ? decryptDeterministic(rawLog.user.email) : '',
+          firstName: rawLog.user.firstName ? decryptRandomized(rawLog.user.firstName) : '',
+          lastName: rawLog.user.lastName ? decryptRandomized(rawLog.user.lastName) : '',
+          role: rawLog.user.role || 'SUPER_ADMIN',
+        };
+      } catch (e) {
+        decryptedUser = {
+          id: rawLog.user.id,
+          email: rawLog.user.email || '',
+          firstName: '',
+          lastName: '',
+          role: rawLog.user.role || 'SUPER_ADMIN',
+        };
+      }
+    }
+
+    return {
+      id: rawLog?.id || 'unknown',
+      userId: rawLog?.userId || null,
+      action: decryptedAction || 'UNKNOWN_ACTION',
+      entityType: decryptedEntityType || null,
+      entityId: decryptedEntityId || null,
+      ipAddress: decryptedIpAddress || null,
+      createdAt: rawLog?.createdAt || new Date(),
+      details: parsedDetails,
+      user: decryptedUser,
+    };
+  } catch (err) {
+    console.error('Error in decryptAuditLog for row:', rawLog?.id, err);
+    return {
+      id: rawLog?.id || 'unknown',
+      userId: rawLog?.userId || null,
+      action: rawLog?.action || 'UNKNOWN_ACTION',
+      entityType: rawLog?.entityType || null,
+      entityId: rawLog?.entityId || null,
+      ipAddress: rawLog?.ipAddress || null,
+      createdAt: rawLog?.createdAt || new Date(),
+      details: {},
+      user: null,
     };
   }
-
-  return {
-    id: rawLog.id,
-    userId: rawLog.userId,
-    action: decryptedAction,
-    entityType: decryptedEntityType,
-    entityId: decryptedEntityId,
-    ipAddress: decryptedIpAddress,
-    createdAt: rawLog.createdAt,
-    details: parsedDetails,
-    user: decryptedUser,
-  };
 }
 
 export interface GetAuditLogsFilter {
@@ -330,23 +382,77 @@ export async function getAuditLogs(filter: GetAuditLogsFilter) {
     }
   }
 
-  const rawLogs = await prisma.auditLog.findMany({
-    where: whereClause,
-    include: {
-      user: {
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          role: true,
+  let rawLogs: any[] = [];
+  try {
+    rawLogs = await prisma.auditLog.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
         },
       },
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  } catch (dbError: any) {
+    console.error('Database query error in getAuditLogs:', dbError?.message);
+    const msg = dbError?.message || '';
+    // If production table doesn't have entity_type or entity_id yet:
+    if (msg.includes('entity_type') || msg.includes('entity_id') || dbError?.code === 'P2021' || dbError?.code === 'P2022') {
+      console.warn('Running raw SQL fallback to query audit_logs without newly added columns...');
+      try {
+        const legacyRows: any[] = await prisma.$queryRawUnsafe(`
+          SELECT 
+            al.id, 
+            al.user_id as userId, 
+            al.action, 
+            al.details, 
+            al.ip_address as ipAddress, 
+            al.created_at as createdAt,
+            u.id as user_id,
+            u.email as user_email,
+            u.firstName as user_firstName,
+            u.lastName as user_lastName,
+            u.role as user_role
+          FROM audit_logs al
+          LEFT JOIN users u ON al.user_id = u.id
+          ORDER BY al.created_at DESC
+        `);
+
+        rawLogs = legacyRows.map((r) => ({
+          id: r.id,
+          userId: r.userId,
+          action: r.action,
+          entityType: null,
+          entityId: null,
+          details: r.details,
+          ipAddress: r.ipAddress,
+          createdAt: r.createdAt,
+          user: r.user_id
+            ? {
+                id: r.user_id,
+                email: r.user_email,
+                firstName: r.user_firstName,
+                lastName: r.user_lastName,
+                role: r.user_role,
+              }
+            : null,
+        }));
+      } catch (rawErr) {
+        console.error('Raw SQL query fallback also failed:', rawErr);
+        throw dbError;
+      }
+    } else {
+      throw dbError;
+    }
+  }
 
   // Decrypt all records
   const decryptedLogs = rawLogs.map(decryptAuditLog);
@@ -379,9 +485,9 @@ export async function getAuditLogs(filter: GetAuditLogsFilter) {
       const actionText = (l.action || '').toLowerCase();
       const entityTypeText = (l.entityType || '').toLowerCase();
       const entityIdText = (l.entityId || '').toLowerCase();
-      const entityNameText = (l.details.entityName || '').toLowerCase();
-      const summaryText = (l.details.summary || '').toLowerCase();
-      const reasonText = (l.details.reason || '').toLowerCase();
+      const entityNameText = (l.details?.entityName ? String(l.details.entityName) : '').toLowerCase();
+      const summaryText = (l.details?.summary ? String(l.details.summary) : '').toLowerCase();
+      const reasonText = (l.details?.reason ? String(l.details.reason) : '').toLowerCase();
       const ipText = (l.ipAddress || '').toLowerCase();
       const userName = `${l.user?.firstName || ''} ${l.user?.lastName || ''}`.toLowerCase();
       const userEmail = (l.user?.email || '').toLowerCase();

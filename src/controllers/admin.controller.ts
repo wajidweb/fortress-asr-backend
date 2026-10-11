@@ -1104,8 +1104,12 @@ export const getAuditLogsController = async (req: Request, res: Response): Promi
     });
 
     res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to retrieve encrypted audit logs' });
+  } catch (error: any) {
+    console.error('CRITICAL: Error in getAuditLogsController:', error);
+    res.status(500).json({ 
+      error: 'Failed to retrieve encrypted audit logs',
+      message: error?.message || 'Database query error',
+    });
   }
 };
 
@@ -1123,7 +1127,11 @@ export const getAuditLogByIdController = async (req: Request, res: Response): Pr
     }
 
     res.json({ log });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to retrieve audit log details' });
+  } catch (error: any) {
+    console.error('CRITICAL: Error in getAuditLogByIdController:', error);
+    res.status(500).json({ 
+      error: 'Failed to retrieve audit log details',
+      message: error?.message || 'Database query error',
+    });
   }
 };

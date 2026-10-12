@@ -11,6 +11,8 @@ import {
   resetPassword,
   verifyEmail,
   resendVerification,
+  verifyInvitation,
+  acceptInvitation,
 } from '../controllers/auth.controller';
 import { requireAuth } from '../middlewares/auth.middleware';
 
@@ -42,6 +44,8 @@ router.post('/forgot-password', authLimiter, forgotPassword);
 router.post('/reset-password', authLimiter, resetPassword);
 router.post('/verify-email', authLimiter, verifyEmail);
 router.post('/resend-verification', authLimiter, resendVerification);
+router.get('/invitation/verify', authLimiter, verifyInvitation);
+router.post('/invitation/accept', authLimiter, acceptInvitation);
 
 // Protected routes
 router.get('/me', requireAuth, getMe);

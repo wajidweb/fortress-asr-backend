@@ -35,6 +35,7 @@ export async function verifyPassword(hashedVal: string, password: string): Promi
 export interface JwtPayload {
   userId: string;
   role: string;
+  permissions?: string[];
 }
 
 /**

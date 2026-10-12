@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
-import { decryptRandomized, decryptDeterministic } from '../utils/crypto';
+import { 
+  decryptRandomized, 
+  decryptDeterministic, 
+  encryptDeterministic, 
+  encryptRandomized 
+} from '../utils/crypto';
 import { GuardStatus, ClientStatus, Role, ServiceRequestStatus, ServiceRequestUrgency, ServiceRequestType, ShiftStatus } from '@prisma/client';
 import { 
   approveSiteServiceRequestSchema,
@@ -8,6 +13,10 @@ import {
   rejectSiteServiceRequestSchema,
   updateSiteSchema 
 } from '../validators/site-request.validator';
+import { inviteStaffSchema } from '../validators/auth.validator';
+import { resolvePermissions, PERMISSION_TEMPLATES, ALL_AVAILABLE_PERMISSIONS } from '../config/permissions';
+import { generateSecureToken, hashToken, hashPassword } from '../utils/auth.utils';
+import { sendStaffInvitationEmail } from '../services/mail.service';
 import { z } from 'zod';
 import { recordAuditLog, getAuditLogs, getAuditLogById } from '../services/audit.service';
 
@@ -1135,3 +1144,514 @@ export const getAuditLogByIdController = async (req: Request, res: Response): Pr
     });
   }
 };
+
+/**
+ * Helper to decrypt a Staff User object for administrative views
+ */
+function decryptStaffUser(user: any) {
+  if (!user) return user;
+  return {
+    id: user.id,
+    email: decryptDeterministic(user.email),
+    firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+    lastName: user.lastName ? decryptRandomized(user.lastName) : '',
+    phoneNumber: user.phoneNumber ? decryptRandomized(user.phoneNumber) : null,
+    role: user.role,
+    isActive: user.isActive,
+    isEmailVerified: user.isEmailVerified,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    staffProfile: user.staffProfile ? {
+      ...user.staffProfile,
+      jobTitle: user.staffProfile.jobTitle || null,
+      department: user.staffProfile.department || null,
+      template: user.staffProfile.template || 'FULL_OPERATIONS',
+      permissions: Array.isArray(user.staffProfile.permissions)
+        ? user.staffProfile.permissions
+        : typeof user.staffProfile.permissions === 'string'
+          ? JSON.parse(user.staffProfile.permissions)
+          : [],
+    } : null,
+    invitationTokens: user.invitationTokens ? user.invitationTokens.map((it: any) => ({
+      id: it.id,
+      expiresAt: it.expiresAt,
+      usedAt: it.usedAt,
+      createdAt: it.createdAt,
+    })) : [],
+  };
+}
+
+/**
+ * Super Admin: Invite a new internal staff employee
+ */
+export const inviteStaff = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = inviteStaffSchema.parse(req.body);
+
+    const encryptedEmail = encryptDeterministic(data.email.toLowerCase().trim());
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email: encryptedEmail },
+    });
+
+    if (existingUser) {
+      res.status(400).json({ error: 'An account with this email address already exists' });
+      return;
+    }
+
+    const resolvedPerms = resolvePermissions(data.template, data.permissions);
+    const tempRandomSecret = generateSecureToken();
+    const tempPasswordHash = await hashPassword(tempRandomSecret);
+
+    const encryptedFirstName = encryptRandomized(data.firstName.trim());
+    const encryptedLastName = encryptRandomized(data.lastName.trim());
+    const encryptedPhone = data.phoneNumber ? encryptRandomized(data.phoneNumber.trim()) : null;
+
+    // Create inactive user with staffProfile
+    const user = await prisma.user.create({
+      data: {
+        email: encryptedEmail,
+        passwordHash: tempPasswordHash,
+        firstName: encryptedFirstName,
+        lastName: encryptedLastName,
+        phoneNumber: encryptedPhone,
+        role: Role.SUPERVISOR,
+        isActive: false,
+        isEmailVerified: false,
+        staffProfile: {
+          create: {
+            jobTitle: data.jobTitle.trim(),
+            department: data.department ? data.department.trim() : null,
+            template: data.template,
+            permissions: resolvedPerms,
+          },
+        },
+      },
+      include: {
+        staffProfile: true,
+      },
+    });
+
+    // Create 48-hour invitation token
+    const rawInvitationToken = generateSecureToken();
+    const hashedInvitationToken = hashToken(rawInvitationToken);
+
+    await prisma.invitationToken.create({
+      data: {
+        tokenHash: hashedInvitationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
+      },
+    });
+
+    // Send invitation email
+    await sendStaffInvitationEmail(
+      data.email.toLowerCase().trim(),
+      data.firstName.trim(),
+      rawInvitationToken,
+      data.jobTitle,
+      data.template
+    );
+
+    // Record audit log
+    const adminUser = (req as any).user;
+    await recordAuditLog({
+      userId: adminUser?.userId || null,
+      action: 'STAFF_INVITED',
+      entityType: 'USER',
+      entityId: user.id,
+      entityName: `${data.firstName.trim()} ${data.lastName.trim()} (${data.email.toLowerCase().trim()})`,
+      summary: `Super Admin invited new staff user ${data.email} as ${data.jobTitle} with template [${data.template}]`,
+      newValues: {
+        email: data.email,
+        jobTitle: data.jobTitle,
+        department: data.department,
+        template: data.template,
+        permissionsCount: resolvedPerms.length,
+      },
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.status(201).json({
+      message: `Staff invitation successfully dispatched to ${data.email}`,
+      staff: decryptStaffUser(user),
+    });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      console.error('Error in inviteStaff:', error);
+      res.status(500).json({ error: 'Internal server error while inviting staff' });
+    }
+  }
+};
+
+/**
+ * Super Admin: Get list of internal staff members with stats & search
+ */
+export const getStaffList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { search, template, status, page, limit } = req.query;
+
+    const rawUsers = await prisma.user.findMany({
+      where: {
+        role: {
+          in: [Role.SUPER_ADMIN, Role.SUPERVISOR],
+        },
+      },
+      include: {
+        staffProfile: true,
+        invitationTokens: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let decryptedStaff = rawUsers.map((u) => decryptStaffUser(u));
+
+    // In-memory filter on decrypted fields
+    if (search && typeof search === 'string') {
+      const q = search.toLowerCase();
+      decryptedStaff = decryptedStaff.filter((u) => {
+        const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
+        const email = u.email.toLowerCase();
+        const title = (u.staffProfile?.jobTitle || '').toLowerCase();
+        const dept = (u.staffProfile?.department || '').toLowerCase();
+        return fullName.includes(q) || email.includes(q) || title.includes(q) || dept.includes(q);
+      });
+    }
+
+    if (template && typeof template === 'string' && template !== 'ALL') {
+      decryptedStaff = decryptedStaff.filter((u) => u.staffProfile?.template === template);
+    }
+
+    if (status && typeof status === 'string' && status !== 'ALL') {
+      if (status === 'ACTIVE') {
+        decryptedStaff = decryptedStaff.filter((u) => u.isActive);
+      } else if (status === 'INACTIVE') {
+        decryptedStaff = decryptedStaff.filter((u) => !u.isActive && u.isEmailVerified);
+      } else if (status === 'PENDING') {
+        decryptedStaff = decryptedStaff.filter((u) => !u.isEmailVerified && !u.isActive);
+      }
+    }
+
+    // Stats calculations
+    const allDecrypted = rawUsers.map((u) => decryptStaffUser(u));
+    const stats = {
+      totalStaff: allDecrypted.length,
+      superAdminsCount: allDecrypted.filter((u) => u.role === Role.SUPER_ADMIN).length,
+      supervisorsCount: allDecrypted.filter((u) => u.role === Role.SUPERVISOR).length,
+      activeCount: allDecrypted.filter((u) => u.isActive).length,
+      pendingInviteCount: allDecrypted.filter((u) => !u.isEmailVerified && !u.isActive).length,
+      fullOperationsCount: allDecrypted.filter((u) => u.staffProfile?.template === 'FULL_OPERATIONS').length,
+      dispatcherCount: allDecrypted.filter((u) => u.staffProfile?.template === 'DISPATCHER').length,
+      readOnlyCount: allDecrypted.filter((u) => u.staffProfile?.template === 'READ_ONLY').length,
+    };
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 10));
+    const total = decryptedStaff.length;
+    const totalPages = Math.ceil(total / limitNum) || 1;
+    const paginatedStaff = decryptedStaff.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+    res.json({
+      staff: paginatedStaff,
+      stats,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error in getStaffList:', error);
+    res.status(500).json({ error: 'Internal server error while fetching staff list' });
+  }
+};
+
+/**
+ * Super Admin: Update staff permissions or role template
+ */
+export const updateStaffPermissions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { template, permissions, jobTitle, department } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { staffProfile: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'Staff user not found' });
+      return;
+    }
+
+    if (user.role === Role.SUPER_ADMIN) {
+      res.status(400).json({ error: 'Cannot modify permissions for Super Administrator' });
+      return;
+    }
+
+    const currentProfile = user.staffProfile;
+    const resolvedPerms = resolvePermissions(template || currentProfile?.template || 'FULL_OPERATIONS', permissions);
+
+    const updatedProfile = await prisma.staffProfile.upsert({
+      where: { userId: id },
+      create: {
+        userId: id,
+        jobTitle: jobTitle !== undefined ? jobTitle : currentProfile?.jobTitle,
+        department: department !== undefined ? department : currentProfile?.department,
+        template: template || 'FULL_OPERATIONS',
+        permissions: resolvedPerms,
+      },
+      update: {
+        jobTitle: jobTitle !== undefined ? jobTitle : currentProfile?.jobTitle,
+        department: department !== undefined ? department : currentProfile?.department,
+        template: template || currentProfile?.template,
+        permissions: resolvedPerms,
+      },
+    });
+
+    const adminUser = (req as any).user;
+    const decryptedEmail = decryptDeterministic(user.email);
+
+    await recordAuditLog({
+      userId: adminUser?.userId || null,
+      action: 'STAFF_PERMISSIONS_UPDATED',
+      entityType: 'USER',
+      entityId: user.id,
+      entityName: `${user.firstName ? decryptRandomized(user.firstName) : ''} (${decryptedEmail})`,
+      summary: `Updated permissions for staff user ${decryptedEmail} to template [${updatedProfile.template}]`,
+      previousValues: {
+        template: currentProfile?.template,
+        permissions: currentProfile?.permissions,
+      },
+      newValues: {
+        template: updatedProfile.template,
+        permissions: updatedProfile.permissions,
+      },
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.json({
+      message: 'Staff permissions updated successfully',
+      staffProfile: updatedProfile,
+    });
+  } catch (error: any) {
+    console.error('Error in updateStaffPermissions:', error);
+    res.status(500).json({ error: 'Internal server error while updating staff permissions' });
+  }
+};
+
+/**
+ * Super Admin: Toggle staff active / deactivated status
+ */
+export const toggleStaffStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { isActive, reason } = req.body;
+
+    if (typeof isActive !== 'boolean') {
+      res.status(400).json({ error: 'isActive must be a boolean' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { staffProfile: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'Staff user not found' });
+      return;
+    }
+
+    if (user.role === Role.SUPER_ADMIN) {
+      res.status(400).json({ error: 'Cannot deactivate Super Administrator account' });
+      return;
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { isActive },
+      include: { staffProfile: true },
+    });
+
+    // When deactivating, immediately revoke all existing refresh tokens for instant global session kill
+    if (!isActive) {
+      await prisma.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+
+    const adminUser = (req as any).user;
+    const decryptedEmail = decryptDeterministic(user.email);
+
+    await recordAuditLog({
+      userId: adminUser?.userId || null,
+      action: 'STAFF_STATUS_CHANGED',
+      entityType: 'USER',
+      entityId: user.id,
+      entityName: `${user.firstName ? decryptRandomized(user.firstName) : ''} (${decryptedEmail})`,
+      summary: `Staff account ${decryptedEmail} status changed to ${isActive ? 'ACTIVE' : 'DEACTIVATED'}`,
+      previousValues: { isActive: user.isActive },
+      newValues: { isActive },
+      reason: reason || null,
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.json({
+      message: `Staff account successfully ${isActive ? 'activated' : 'deactivated'}`,
+      isActive: updatedUser.isActive,
+    });
+  } catch (error: any) {
+    console.error('Error in toggleStaffStatus:', error);
+    res.status(500).json({ error: 'Internal server error while toggling staff status' });
+  }
+};
+
+/**
+ * Super Admin: Re-issue expiring staff invitation link and send email
+ */
+export const resendStaffInvitation = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { staffProfile: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'Staff user not found' });
+      return;
+    }
+
+    if (user.isEmailVerified && user.isActive) {
+      res.status(400).json({ error: 'This user has already accepted the invitation and is active. You can send a password reset if needed.' });
+      return;
+    }
+
+    // Invalidate prior pending invitation tokens
+    await prisma.invitationToken.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data: { expiresAt: new Date() },
+    });
+
+    // Create fresh 48-hour token
+    const rawInvitationToken = generateSecureToken();
+    const hashedInvitationToken = hashToken(rawInvitationToken);
+
+    await prisma.invitationToken.create({
+      data: {
+        tokenHash: hashedInvitationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+      },
+    });
+
+    const decryptedEmail = decryptDeterministic(user.email);
+    const decryptedFirstName = user.firstName ? decryptRandomized(user.firstName) : '';
+
+    await sendStaffInvitationEmail(
+      decryptedEmail,
+      decryptedFirstName,
+      rawInvitationToken,
+      user.staffProfile?.jobTitle,
+      user.staffProfile?.template
+    );
+
+    const adminUser = (req as any).user;
+    await recordAuditLog({
+      userId: adminUser?.userId || null,
+      action: 'STAFF_INVITATION_RESENT',
+      entityType: 'USER',
+      entityId: user.id,
+      entityName: `${decryptedFirstName} (${decryptedEmail})`,
+      summary: `Resent staff invitation email to ${decryptedEmail}`,
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.json({
+      message: `Fresh invitation email has been sent to ${decryptedEmail}`,
+    });
+  } catch (error: any) {
+    console.error('Error in resendStaffInvitation:', error);
+    res.status(500).json({ error: 'Internal server error while resending invitation' });
+  }
+};
+
+/**
+ * Super Admin: Get permission templates and list of all available system permissions
+ */
+export const getAvailablePermissionsController = async (_req: Request, res: Response): Promise<void> => {
+  res.json({
+    templates: PERMISSION_TEMPLATES,
+    availablePermissions: ALL_AVAILABLE_PERMISSIONS,
+  });
+};
+
+/**
+ * Super Admin: Permanently delete an employee staff account
+ */
+export const deleteStaffUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { staffProfile: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'Staff user not found' });
+      return;
+    }
+
+    if (user.role === Role.SUPER_ADMIN) {
+      res.status(400).json({ error: 'Cannot delete Super Administrator accounts' });
+      return;
+    }
+
+    const decryptedEmail = decryptDeterministic(user.email);
+    const decryptedFirstName = user.firstName ? decryptRandomized(user.firstName) : '';
+    const decryptedLastName = user.lastName ? decryptRandomized(user.lastName) : '';
+    const employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || decryptedEmail;
+
+    // Delete user (Prisma cascades staffProfile, tokens, and sets auditLogs.userId to null)
+    await prisma.user.delete({
+      where: { id },
+    });
+
+    // Record audit log
+    const adminUser = (req as any).user;
+    await recordAuditLog({
+      userId: adminUser?.userId || null,
+      action: 'STAFF_DELETED',
+      entityType: 'USER',
+      entityId: id,
+      entityName: `${employeeName} (${decryptedEmail})`,
+      summary: `Permanently deleted staff employee ${employeeName} (${decryptedEmail})`,
+      previousValues: {
+        email: decryptedEmail,
+        jobTitle: user.staffProfile?.jobTitle,
+        department: user.staffProfile?.department,
+        template: user.staffProfile?.template,
+      },
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.json({
+      message: `Staff employee account for "${employeeName}" has been permanently deleted.`,
+    });
+  } catch (error: any) {
+    console.error('Error in deleteStaffUser:', error);
+    res.status(500).json({ error: 'Internal server error while deleting staff user' });
+  }
+};
+

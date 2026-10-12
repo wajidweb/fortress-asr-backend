@@ -88,12 +88,14 @@ model User {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  guardProfile  GuardProfile?
-  clientProfile ClientProfile?
-  auditLogs     AuditLog[]
-  refreshTokens RefreshToken[]
-  resetTokens   PasswordResetToken[]
+  guardProfile            GuardProfile?
+  clientProfile           ClientProfile?
+  staffProfile            StaffProfile?
+  auditLogs               AuditLog[]
+  refreshTokens           RefreshToken[]
+  resetTokens             PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  invitationTokens        InvitationToken[]
 
   @@map("users")
 }
@@ -481,3 +483,37 @@ model EmailVerificationToken {
   @@index([userId])
   @@map("email_verification_tokens")
 }
+
+model StaffProfile {
+  id          String    @id @default(uuid())
+  userId      String    @unique @map("user_id")
+  jobTitle    String?   @map("job_title") @db.VarChar(100)
+  department  String?   @db.VarChar(100)
+  template    String    @default("FULL_OPERATIONS") @db.VarChar(50) // FULL_OPERATIONS | DISPATCHER | READ_ONLY | CUSTOM
+  permissions Json      // JSON array of strings: ["guards:read", "shifts:write", ...]
+  invitedAt   DateTime  @default(now()) @map("invited_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("staff_profiles")
+}
+
+model InvitationToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("invitation_tokens")
+}
+

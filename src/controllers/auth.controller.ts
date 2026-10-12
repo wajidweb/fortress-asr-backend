@@ -21,8 +21,10 @@ import {
   registerClientSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  acceptInvitationSchema,
 } from '../validators/auth.validator';
 import { sendPasswordResetEmail, sendVerificationEmail } from '../services/mail.service';
+import { recordAuditLog } from '../services/audit.service';
 import { Role } from '@prisma/client';
 import { z } from 'zod';
 
@@ -69,6 +71,20 @@ export function decryptUser(user: any) {
       urlSlug,
       slug: urlSlug,
       createdAt: rawProfile.createdAt,
+    };
+  }
+  if (decrypted.staffProfile) {
+    const rawStaff = decrypted.staffProfile;
+    decrypted.staffProfile = {
+      ...rawStaff,
+      jobTitle: rawStaff.jobTitle || null,
+      department: rawStaff.department || null,
+      template: rawStaff.template || 'FULL_OPERATIONS',
+      permissions: Array.isArray(rawStaff.permissions)
+        ? rawStaff.permissions
+        : typeof rawStaff.permissions === 'string'
+          ? JSON.parse(rawStaff.permissions)
+          : [],
     };
   }
   return decrypted;
@@ -197,10 +213,11 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       include: {
         guardProfile: true,
         clientProfile: true,
+        staffProfile: true,
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
@@ -212,6 +229,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (!user.isActive) {
+      res.status(403).json({ 
+        error: 'Your account has been deactivated. Please contact your System Administrator.',
+        isDeactivated: true,
+      });
+      return;
+    }
+
     if (!user.isEmailVerified) {
       res.status(401).json({ 
         error: 'Please verify your email address before logging in.',
@@ -220,7 +245,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const payload = { userId: user.id, role: user.role };
+    const permissions: string[] = (user.staffProfile?.permissions as string[]) || (user.role === Role.SUPER_ADMIN ? ['*'] : []);
+    const payload = { userId: user.id, role: user.role, permissions };
     const accessToken = generateAccessToken(payload);
     const refreshToken = generateRefreshToken(payload);
 
@@ -286,11 +312,20 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
       include: {
         guardProfile: true,
         clientProfile: true,
+        staffProfile: true,
       },
     });
 
     if (!user) {
       res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    if (!user.isActive) {
+      res.status(401).json({
+        error: 'Unauthorized: Your account has been deactivated. Session revoked.',
+        isDeactivated: true,
+      });
       return;
     }
 
@@ -321,7 +356,21 @@ export const refresh = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const payload = { userId: decoded.userId, role: decoded.role };
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      include: { staffProfile: true },
+    });
+
+    if (!user || !user.isActive) {
+      res.status(401).json({
+        error: 'Unauthorized: Your account has been deactivated.',
+        isDeactivated: true,
+      });
+      return;
+    }
+
+    const permissions: string[] = (user?.staffProfile?.permissions as string[]) || (decoded.role === Role.SUPER_ADMIN ? ['*'] : (decoded.permissions || []));
+    const payload = { userId: decoded.userId, role: decoded.role, permissions };
     const newAccessToken = generateAccessToken(payload);
     const newRefreshToken = generateRefreshToken(payload);
     const newHashedRefreshToken = hashToken(newRefreshToken);
@@ -522,6 +571,150 @@ export const resendVerification = async (req: Request, res: Response): Promise<v
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+/**
+ * Verify validity of a staff employee invitation token
+ */
+export const verifyInvitation = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.query;
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({ error: 'Invitation token is required' });
+      return;
+    }
+
+    const hashedToken = hashToken(token);
+
+    const invitation = await prisma.invitationToken.findUnique({
+      where: { tokenHash: hashedToken },
+      include: {
+        user: {
+          include: {
+            staffProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!invitation) {
+      res.status(404).json({ error: 'Invalid or unknown invitation token' });
+      return;
+    }
+
+    if (invitation.usedAt) {
+      res.status(400).json({ error: 'This invitation link has already been used and activated.' });
+      return;
+    }
+
+    if (invitation.expiresAt < new Date()) {
+      res.status(400).json({ error: 'This invitation link has expired. Please contact System Administration for a new invite.' });
+      return;
+    }
+
+    const user = invitation.user;
+    const decryptedFirstName = user.firstName ? decryptRandomized(user.firstName) : '';
+    const decryptedLastName = user.lastName ? decryptRandomized(user.lastName) : '';
+    const decryptedEmail = decryptDeterministic(user.email);
+
+    res.json({
+      valid: true,
+      email: decryptedEmail,
+      firstName: decryptedFirstName,
+      lastName: decryptedLastName,
+      jobTitle: user.staffProfile?.jobTitle || 'Operations Supervisor',
+      department: user.staffProfile?.department || null,
+      template: user.staffProfile?.template || 'FULL_OPERATIONS',
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error while verifying invitation' });
+  }
+};
+
+/**
+ * Accept staff employee invitation, set initial password, and activate account
+ */
+export const acceptInvitation = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data = acceptInvitationSchema.parse(req.body);
+
+    const hashedToken = hashToken(data.token);
+
+    const invitation = await prisma.invitationToken.findUnique({
+      where: { tokenHash: hashedToken },
+      include: {
+        user: {
+          include: {
+            staffProfile: true,
+          },
+        },
+      },
+    });
+
+    if (!invitation) {
+      res.status(404).json({ error: 'Invalid or unknown invitation token' });
+      return;
+    }
+
+    if (invitation.usedAt) {
+      res.status(400).json({ error: 'This invitation link has already been used.' });
+      return;
+    }
+
+    if (invitation.expiresAt < new Date()) {
+      res.status(400).json({ error: 'This invitation link has expired. Please request a new invite.' });
+      return;
+    }
+
+    const hashedPassword = await hashPassword(data.password);
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: invitation.userId },
+        data: {
+          passwordHash: hashedPassword,
+          isActive: true,
+          isEmailVerified: true,
+        },
+      }),
+      prisma.invitationToken.update({
+        where: { id: invitation.id },
+        data: { usedAt: now },
+      }),
+      prisma.staffProfile.update({
+        where: { userId: invitation.userId },
+        data: { acceptedAt: now },
+      }),
+    ]);
+
+    // Record audit log
+    const decryptedEmail = decryptDeterministic(invitation.user.email);
+    await recordAuditLog({
+      userId: invitation.userId,
+      action: 'STAFF_INVITATION_ACCEPTED',
+      entityType: 'USER',
+      entityId: invitation.userId,
+      entityName: `${invitation.user.firstName ? decryptRandomized(invitation.user.firstName) : ''} (${decryptedEmail})`,
+      summary: `Staff invitation accepted and password set for employee ${decryptedEmail}`,
+      metadata: {
+        template: invitation.user.staffProfile?.template,
+        jobTitle: invitation.user.staffProfile?.jobTitle,
+      },
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+    });
+
+    res.json({
+      message: 'Account activated successfully. You can now log in to the Operations Command Center.',
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Internal server error while activating staff account' });
+    }
+  }
+};
+
 
 
 

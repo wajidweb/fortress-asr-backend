@@ -329,3 +329,169 @@ This link is valid for 24 hours. If you did not create this account, please igno
   });
 }
 
+/**
+ * Dispatch an employee staff onboarding invitation email with secure activation link
+ */
+export async function sendStaffInvitationEmail(
+  email: string,
+  firstName: string,
+  token: string,
+  jobTitle?: string | null,
+  template?: string | null
+): Promise<boolean> {
+  const invitationUrl = `${env.FRONTEND_URL}/accept-invitation?token=${token}`;
+  const roleName = jobTitle || (template ? template.replace('_', ' ') : 'Operations Staff');
+
+  const subject = 'Fortress ASR - Staff Portal Invitation & Account Activation';
+
+  const text = `Hello ${firstName || 'Team Member'},
+
+You have been invited to join the Fortress ASR Security Operations Command Center as ${roleName}.
+
+To set up your password and activate your internal employee account, please open the following link:
+${invitationUrl}
+
+This secure activation link will expire in 48 hours. If you believe this invitation was issued in error, please contact your System Administrator immediately.`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Staff Portal Invitation</title>
+      <style>
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background-color: #f8fafc;
+          margin: 0;
+          padding: 0;
+          color: #1e293b;
+        }
+        .container {
+          max-width: 600px;
+          margin: 40px auto;
+          background-color: #ffffff;
+          border-radius: 8px;
+          overflow: hidden;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+          border: 1px solid #e2e8f0;
+        }
+        .header {
+          background-color: #032031;
+          color: #ffffff;
+          padding: 30px;
+          text-align: center;
+        }
+        .header h1 {
+          margin: 0;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -0.025em;
+          text-transform: uppercase;
+        }
+        .header p {
+          margin: 8px 0 0 0;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: #94a3b8;
+        }
+        .content {
+          padding: 40px 30px;
+          line-height: 1.6;
+        }
+        .content p {
+          margin-top: 0;
+          margin-bottom: 20px;
+          font-size: 15px;
+        }
+        .role-badge {
+          display: inline-block;
+          background-color: #f1f5f9;
+          border: 1px solid #cbd5e1;
+          padding: 6px 14px;
+          border-radius: 4px;
+          font-weight: 700;
+          color: #032031;
+          font-size: 13px;
+          margin-bottom: 20px;
+        }
+        .btn-container {
+          text-align: center;
+          margin: 30px 0;
+        }
+        .btn {
+          display: inline-block;
+          background-color: #032031;
+          color: #ffffff !important;
+          text-decoration: none;
+          padding: 14px 32px;
+          font-size: 14px;
+          font-weight: 700;
+          text-transform: uppercase;
+          border-radius: 4px;
+          letter-spacing: 0.05em;
+          transition: background-color 0.2s ease;
+        }
+        .btn:hover {
+          background-color: #000000;
+        }
+        .link-text {
+          word-break: break-all;
+          font-size: 12px;
+          color: #64748b;
+          background-color: #f1f5f9;
+          padding: 12px;
+          border-radius: 4px;
+          border: 1px dashed #cbd5e1;
+          margin-top: 25px;
+        }
+        .footer {
+          background-color: #f1f5f9;
+          padding: 20px 30px;
+          text-align: center;
+          font-size: 12px;
+          color: #64748b;
+          border-top: 1px solid #e2e8f0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Fortress ASR Security</h1>
+          <p>Security Operations Command System</p>
+        </div>
+        <div class="content">
+          <p>Hello <strong>${firstName || 'Team Member'}</strong>,</p>
+          <p>You have been formally invited by System Administration to join the internal command operations portal with the following assigned appointment:</p>
+          <div>
+            <span class="role-badge">Role: ${roleName}</span>
+          </div>
+          <p>To establish your account credentials and activate secure access to the operations dashboard, please click the activation button below:</p>
+          <div class="btn-container">
+            <a href="${invitationUrl}" class="btn">Set Password & Activate Account</a>
+          </div>
+          <p><em>Security Notice: This link is single-use and will expire in <strong>48 hours</strong>.</em></p>
+          <div class="link-text">
+            <strong>Having trouble with the button?</strong> Copy and paste this URL directly into your browser:<br>
+            <a href="${invitationUrl}">${invitationUrl}</a>
+          </div>
+        </div>
+        <div class="footer">
+          &copy; 2026 Fortress ASR Security Operations. All rights reserved.<br>
+          Confidential operational notification. Please do not reply to this email.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendMail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+}
+

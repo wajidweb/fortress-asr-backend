@@ -64,3 +64,20 @@ export const resetPasswordSchema = z.object({
   token: z.string().min(1, 'Token is required'),
   newPassword: z.string().min(8, 'Password must be at least 8 characters long'),
 });
+
+export const inviteStaffSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
+  phoneNumber: z.string().optional().nullable(),
+  jobTitle: z.string().min(1, 'Job title is required'),
+  department: z.string().optional().nullable(),
+  template: z.enum(['FULL_OPERATIONS', 'DISPATCHER', 'READ_ONLY', 'CUSTOM']).default('FULL_OPERATIONS'),
+  permissions: z.array(z.string()).optional(),
+});
+
+export const acceptInvitationSchema = z.object({
+  token: z.string().min(1, 'Invitation token is required'),
+  password: z.string().min(8, 'Password must be at least 8 characters long'),
+});
+

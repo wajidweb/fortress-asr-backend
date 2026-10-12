@@ -6,7 +6,10 @@ declare global {
       user?: {
         userId: string;
         role: Role;
+        permissions?: string[];
+        email?: string;
       };
     }
   }
 }
+

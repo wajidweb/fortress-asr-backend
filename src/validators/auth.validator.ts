@@ -31,6 +31,8 @@ export const updateGuardProfileSchema = z.object({
   hasIndefiniteRtw: z.boolean().default(false),
   rtwDocumentUrl: z.string().min(1, 'Right to work document link is required').max(512),
   profilePictureUrl: z.string().max(512).optional().nullable().or(z.literal('')),
+  emergencyContactName: z.string().max(100).optional().nullable().or(z.literal('')),
+  emergencyContactPhone: z.string().max(50).optional().nullable().or(z.literal('')),
 });
 
 export const updateClientProfileSchema = z.object({

@@ -78,6 +78,21 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
       finalProfilePictureUrl = data.profilePictureUrl ? data.profilePictureUrl.trim() : null;
     }
 
+    // Extract and sanitize optional Emergency Contact credentials
+    let finalEmergencyContactName: string | null | undefined = undefined;
+    if (data.emergencyContactName !== undefined) {
+      finalEmergencyContactName = data.emergencyContactName && data.emergencyContactName.trim() !== ''
+        ? data.emergencyContactName.trim()
+        : null;
+    }
+
+    let finalEmergencyContactPhone: string | null | undefined = undefined;
+    if (data.emergencyContactPhone !== undefined) {
+      finalEmergencyContactPhone = data.emergencyContactPhone && data.emergencyContactPhone.trim() !== ''
+        ? data.emergencyContactPhone.trim()
+        : null;
+    }
+
     // Sync PII details (First Name, Last Name, and Phone Number) to the main User credential record if updated
     if (data.firstName || data.lastName || data.phoneNumber) {
       await prisma.user.update({
@@ -105,6 +120,8 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
         hasIndefiniteRTW: data.hasIndefiniteRtw,
         rtwDocumentUrl: encryptRandomized(data.rtwDocumentUrl),
         profilePictureUrl: finalProfilePictureUrl || null,
+        emergencyContactName: finalEmergencyContactName ? encryptRandomized(finalEmergencyContactName) : null,
+        emergencyContactPhone: finalEmergencyContactPhone ? encryptRandomized(finalEmergencyContactPhone) : null,
       },
       update: {
         firstName: data.firstName ? encryptRandomized(data.firstName) : undefined,
@@ -117,6 +134,12 @@ export const updateGuardProfile = async (req: Request, res: Response): Promise<v
         hasIndefiniteRTW: data.hasIndefiniteRtw,
         rtwDocumentUrl: encryptRandomized(data.rtwDocumentUrl),
         profilePictureUrl: finalProfilePictureUrl !== undefined ? finalProfilePictureUrl : undefined,
+        emergencyContactName: finalEmergencyContactName !== undefined
+          ? (finalEmergencyContactName ? encryptRandomized(finalEmergencyContactName) : null)
+          : undefined,
+        emergencyContactPhone: finalEmergencyContactPhone !== undefined
+          ? (finalEmergencyContactPhone ? encryptRandomized(finalEmergencyContactPhone) : null)
+          : undefined,
       },
     });
 

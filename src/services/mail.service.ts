@@ -495,3 +495,150 @@ This secure activation link will expire in 48 hours. If you believe this invitat
   });
 }
 
+/**
+ * Dispatch security alert notification when an account password is changed
+ */
+export async function sendPasswordChangeAlertEmail(
+  email: string,
+  details: { ipAddress?: string; changedAt: Date }
+): Promise<boolean> {
+  const formattedTime = details.changedAt.toUTCString();
+  const subject = 'Fortress ASR - Security Alert: Password Changed';
+
+  const text = `Security Notification for Fortress ASR Security Operations:
+Your account password was successfully changed on ${formattedTime}.
+Request IP Address: ${details.ipAddress || 'Unknown'}
+
+If you initiated this change, no further action is required.
+If you did NOT authorize this change, please immediately notify your System Administrator and reset your credentials.`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Security Alert - Password Changed</title>
+      <style>
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background-color: #f8fafc;
+          margin: 0;
+          padding: 0;
+          color: #1e293b;
+        }
+        .container {
+          max-width: 600px;
+          margin: 40px auto;
+          background-color: #ffffff;
+          border-radius: 8px;
+          overflow: hidden;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+          border: 1px solid #e2e8f0;
+        }
+        .header {
+          background-color: #032031;
+          color: #ffffff;
+          padding: 30px;
+          text-align: center;
+        }
+        .header h1 {
+          margin: 0;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -0.025em;
+          text-transform: uppercase;
+        }
+        .header p {
+          margin: 8px 0 0 0;
+          font-size: 14px;
+          color: #94a3b8;
+          font-weight: 500;
+        }
+        .content {
+          padding: 32px 30px;
+          font-size: 15px;
+          line-height: 1.6;
+          color: #334155;
+        }
+        .alert-box {
+          background-color: #fef2f2;
+          border-left: 4px solid #ef4444;
+          padding: 16px;
+          margin: 20px 0;
+          border-radius: 0 6px 6px 0;
+          font-size: 14px;
+          color: #991b1b;
+        }
+        .meta-table {
+          width: 100%;
+          margin: 20px 0;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+        .meta-table td {
+          padding: 8px 12px;
+          border: 1px solid #e2e8f0;
+        }
+        .meta-label {
+          background-color: #f8fafc;
+          font-weight: 600;
+          width: 35%;
+        }
+        .footer {
+          background-color: #f8fafc;
+          padding: 20px;
+          text-align: center;
+          font-size: 12px;
+          color: #64748b;
+          border-top: 1px solid #e2e8f0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Fortress ASR Security</h1>
+          <p>Security Alert Notification</p>
+        </div>
+        <div class="content">
+          <p>Hello,</p>
+          <p>This is an automated operational security notification to confirm that your <strong>Fortress ASR account password was recently changed</strong>.</p>
+          
+          <table class="meta-table">
+            <tr>
+              <td class="meta-label">Timestamp (UTC)</td>
+              <td>${formattedTime}</td>
+            </tr>
+            <tr>
+              <td class="meta-label">Origin IP Address</td>
+              <td>${details.ipAddress || 'Internal Network'}</td>
+            </tr>
+            <tr>
+              <td class="meta-label">Security Status</td>
+              <td><span style="color: #16a34a; font-weight: bold;">Updated & Encrypted (Argon2id)</span></td>
+            </tr>
+          </table>
+
+          <div class="alert-box">
+            <strong>Did not perform this action?</strong><br>
+            If you did not request or authorize this change, someone may have compromised your account. Please notify the security operations team immediately and revoke all active sessions.
+          </div>
+        </div>
+        <div class="footer">
+          &copy; 2026 Fortress ASR Security Operations. All rights reserved.<br>
+          Automated security dispatch. Please do not reply directly to this message.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return sendMail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+}
+
+

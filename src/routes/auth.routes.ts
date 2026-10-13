@@ -14,9 +14,12 @@ import {
   verifyInvitation,
   acceptInvitation,
 } from '../controllers/auth.controller';
+import { changePassword } from '../controllers/security.controller';
 import { requireAuth } from '../middlewares/auth.middleware';
 
+
 const router = Router();
+
 
 // Rate limiters
 const authLimiter = rateLimit({
@@ -49,5 +52,8 @@ router.post('/invitation/accept', authLimiter, acceptInvitation);
 
 // Protected routes
 router.get('/me', requireAuth, getMe);
+router.put('/change-password', requireAuth, authLimiter, changePassword);
 
 export default router;
+
+

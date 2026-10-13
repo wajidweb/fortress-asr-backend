@@ -79,3 +79,20 @@ export function generateSecureToken(length: number = 32): string {
 export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+
+/**
+ * Challenge token for sensitive two-step operations (e.g. password change confirmation)
+ */
+export interface VerificationTokenPayload {
+  userId: string;
+  purpose: string;
+}
+
+export function generateVerificationToken(payload: VerificationTokenPayload, expiresIn: string = '5m'): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: expiresIn as any });
+}
+
+export function verifyVerificationToken(token: string): VerificationTokenPayload {
+  return jwt.verify(token, JWT_SECRET) as VerificationTokenPayload;
+}
+

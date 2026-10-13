@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { 
   getGuards, approveGuard, rejectGuard,
   getClients, approveClient, rejectClient,
@@ -9,10 +10,22 @@ import {
   inviteStaff, getStaffList, updateStaffPermissions, toggleStaffStatus,
   resendStaffInvitation, getAvailablePermissionsController, deleteStaffUser,
 } from '../controllers/admin.controller';
+import { changePassword } from '../controllers/security.controller';
 import { requireAuth, requireRole, requirePermission } from '../middlewares/auth.middleware';
+
 import { Role } from '@prisma/client';
 
 const router = Router();
+
+// Strict rate limiter for sensitive administrative security operations
+const securityLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 requests per window per IP
+  message: 'Too many security operations requested from this IP. Please try again after 15 minutes.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 
 // Retrieve all guard profiles with optional status filtering (?status=PENDING_APPROVAL)
 router.get(
@@ -139,4 +152,15 @@ router.post('/staff/:id/resend-invite', requireAuth, requireRole([Role.SUPER_ADM
 router.get('/staff/permissions-schema', requireAuth, requireRole([Role.SUPER_ADMIN]), getAvailablePermissionsController);
 router.delete('/staff/:id', requireAuth, requireRole([Role.SUPER_ADMIN]), deleteStaffUser);
 
+// Dedicated Super Admin Password Change (Settings)
+router.put(
+  '/security/change-password',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN]),
+  securityLimiter,
+  changePassword
+);
+
 export default router;
+
+

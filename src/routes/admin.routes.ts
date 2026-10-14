@@ -4,7 +4,8 @@ import {
   getGuards, approveGuard, rejectGuard,
   getClients, approveClient, rejectClient,
   getSiteServiceRequests, getSiteServiceRequestById,
-  assessSiteServiceRequest, approveSiteServiceRequest, rejectSiteServiceRequest,
+  assessSiteServiceRequest, approveSiteServiceRequest, rejectSiteServiceRequest, revertSiteServiceRequest,
+  getVisitAssignees, scheduleSiteVisit, recordSiteSurveyReport,
   getAllSites, updateSite,
   getAuditLogsController, getAuditLogByIdController,
   inviteStaff, getStaffList, updateStaffPermissions, toggleStaffStatus,
@@ -90,6 +91,15 @@ router.get(
   getSiteServiceRequests
 );
 
+// Fetch assignable officers for Site Visits
+router.get(
+  '/requests/assignees',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('requests:assess'),
+  getVisitAssignees
+);
+
 router.get(
   '/requests/:id',
   requireAuth,
@@ -106,6 +116,22 @@ router.put(
   assessSiteServiceRequest
 );
 
+router.put(
+  '/requests/:id/schedule-visit',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('requests:assess'),
+  scheduleSiteVisit
+);
+
+router.put(
+  '/requests/:id/survey-notes',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('requests:assess'),
+  recordSiteSurveyReport
+);
+
 router.post(
   '/requests/:id/approve',
   requireAuth,
@@ -120,6 +146,14 @@ router.put(
   requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
   requirePermission('requests:approve'),
   rejectSiteServiceRequest
+);
+
+router.put(
+  '/requests/:id/revert',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('requests:assess'),
+  revertSiteServiceRequest
 );
 
 // Monitored Sites (Properties Geofences)

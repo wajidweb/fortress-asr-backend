@@ -60,6 +60,26 @@ export const rejectSiteServiceRequestSchema = z.object({
   adminFeedbackNotes: z.string().min(1, 'A rejection reason is required to notify the client').max(1000),
 });
 
+export const revertSiteServiceRequestSchema = z.object({
+  adminFeedbackNotes: z.string().max(1000).optional().nullable(),
+});
+
+export const scheduleSiteVisitSchema = z.object({
+  visitAssigneeId: z.string().min(1, 'Please select an officer or administrator to conduct the site visit'),
+  visitScheduledAt: z.string().min(1, 'Visit schedule date and time is required').transform((val) => new Date(val)),
+  adminFeedbackNotes: z.string().max(1000).optional().nullable(),
+});
+
+export const recordSurveyNotesSchema = z.object({
+  surveyLatitude: z.coerce.number().min(-90).max(90, 'Latitude must be between -90 and 90').optional().nullable(),
+  surveyLongitude: z.coerce.number().min(-180).max(180, 'Longitude must be between -180 and 180').optional().nullable(),
+  surveyGeofenceRadiusMeters: z.coerce.number().int().min(10, 'Geofence radius must be at least 10 meters').max(5000, 'Geofence radius cannot exceed 5000 meters').optional().default(100),
+  surveyContactName: z.string().max(100).optional().nullable(),
+  surveyContactPhone: z.string().max(50).optional().nullable(),
+  surveyNotes: z.string().max(3000).optional().nullable(),
+  surveyConductedAt: z.string().optional().nullable().transform((val) => (val ? new Date(val) : new Date())),
+});
+
 export const updateSiteSchema = z.object({
   name: z.string().min(1).max(150).optional(),
   address: z.string().min(1).optional(),

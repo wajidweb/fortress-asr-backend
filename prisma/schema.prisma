@@ -74,6 +74,12 @@ enum ServiceRequestUrgency {
   EMERGENCY
 }
 
+enum VisitStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -96,6 +102,7 @@ model User {
   resetTokens             PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
   invitationTokens        InvitationToken[]
+  assignedSiteVisits      SiteServiceRequest[]    @relation("VisitAssignee")
 
   @@map("users")
 }
@@ -212,15 +219,29 @@ model SiteServiceRequest {
   reviewedByUserId      String?               @map("reviewed_by_user_id")
   reviewedAt            DateTime?             @map("reviewed_at")
 
+  // Physical Site Visit Assessment & Interim Survey Findings
+  visitAssigneeId            String?               @map("visit_assignee_id")
+  visitScheduledAt           DateTime?             @map("visit_scheduled_at")
+  visitStatus                VisitStatus?          @map("visit_status")
+  surveyLatitude             Decimal?              @map("survey_latitude") @db.Decimal(9, 6)
+  surveyLongitude            Decimal?              @map("survey_longitude") @db.Decimal(9, 6)
+  surveyGeofenceRadiusMeters Int?                  @map("survey_geofence_radius_meters")
+  surveyContactName          String?               @map("survey_contact_name") @db.VarChar(100)
+  surveyContactPhone         String?               @map("survey_contact_phone") @db.VarChar(50)
+  surveyNotes                String?               @map("survey_notes") @db.Text
+  surveyConductedAt          DateTime?             @map("survey_conducted_at")
+
   createdAt             DateTime              @default(now()) @map("created_at")
   updatedAt             DateTime              @updatedAt @map("updated_at")
 
   // Relations
   client                ClientProfile         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   site                  Site?                 @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  visitAssignee         User?                 @relation("VisitAssignee", fields: [visitAssigneeId], references: [id], onDelete: SetNull)
 
   @@index([clientId])
   @@index([siteId])
+  @@index([visitAssigneeId])
   @@map("site_service_requests")
 }
 

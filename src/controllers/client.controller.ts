@@ -1,11 +1,22 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
-import { encryptRandomized, decryptRandomized } from '../utils/crypto';
+import { encryptRandomized, decryptRandomized, decryptDeterministic } from '../utils/crypto';
 import { updateClientProfileSchema } from '../validators/auth.validator';
 import { createSiteServiceRequestSchema, updateSiteServiceRequestSchema } from '../validators/site-request.validator';
 import { decryptUser } from './auth.controller';
 import { z } from 'zod';
 import { ServiceRequestStatus, ShiftStatus } from '@prisma/client';
+
+function decryptUserSummary(user: any) {
+  if (!user) return user;
+  return {
+    id: user.id,
+    email: decryptDeterministic(user.email),
+    firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+    lastName: user.lastName ? decryptRandomized(user.lastName) : '',
+    role: user.role,
+  };
+}
 
 export const updateClientProfile = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -256,6 +267,7 @@ export const getMySiteServiceRequests = async (req: Request, res: Response): Pro
               geofenceRadiusMeters: true,
             },
           },
+          visitAssignee: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -267,8 +279,13 @@ export const getMySiteServiceRequests = async (req: Request, res: Response): Pro
       prisma.siteServiceRequest.count({ where: { clientId: clientProfile.id, status: ServiceRequestStatus.APPROVED } }),
     ]);
 
+    const formattedRequests = requests.map((reqItem) => ({
+      ...reqItem,
+      visitAssignee: reqItem.visitAssignee ? decryptUserSummary(reqItem.visitAssignee) : null,
+    }));
+
     res.json({
-      requests,
+      requests: formattedRequests,
       pagination: {
         total: totalCount,
         page,
@@ -308,6 +325,7 @@ export const getMySiteServiceRequestById = async (req: Request, res: Response): 
       where: { id, clientId: clientProfile.id },
       include: {
         site: true,
+        visitAssignee: true,
       },
     });
 
@@ -316,7 +334,12 @@ export const getMySiteServiceRequestById = async (req: Request, res: Response): 
       return;
     }
 
-    res.json({ request });
+    res.json({
+      request: {
+        ...request,
+        visitAssignee: request.visitAssignee ? decryptUserSummary(request.visitAssignee) : null,
+      },
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve service request' });
   }

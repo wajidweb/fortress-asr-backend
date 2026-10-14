@@ -6,11 +6,14 @@ import {
   encryptDeterministic, 
   encryptRandomized 
 } from '../utils/crypto';
-import { GuardStatus, ClientStatus, Role, ServiceRequestStatus, ServiceRequestUrgency, ServiceRequestType, ShiftStatus } from '@prisma/client';
+import { GuardStatus, ClientStatus, Role, ServiceRequestStatus, ServiceRequestUrgency, ServiceRequestType, ShiftStatus, VisitStatus } from '@prisma/client';
 import { 
   approveSiteServiceRequestSchema,
   assessSiteServiceRequestSchema,
   rejectSiteServiceRequestSchema,
+  revertSiteServiceRequestSchema,
+  scheduleSiteVisitSchema,
+  recordSurveyNotesSchema,
   updateSiteSchema 
 } from '../validators/site-request.validator';
 import { inviteStaffSchema } from '../validators/auth.validator';
@@ -65,6 +68,20 @@ function decryptClientProfile(profile: any) {
       lastName: decryptRandomized(profile.user.lastName),
       phoneNumber: profile.user.phoneNumber ? decryptRandomized(profile.user.phoneNumber) : null,
     } : undefined
+  };
+}
+
+/**
+ * Helper to decrypt minimal User details for assigned personnel
+ */
+function decryptUserSummary(user: any) {
+  if (!user) return user;
+  return {
+    id: user.id,
+    email: decryptDeterministic(user.email),
+    firstName: user.firstName ? decryptRandomized(user.firstName) : '',
+    lastName: user.lastName ? decryptRandomized(user.lastName) : '',
+    role: user.role,
   };
 }
 
@@ -596,6 +613,7 @@ export const getSiteServiceRequests = async (req: Request, res: Response): Promi
             },
           },
           site: true,
+          visitAssignee: true,
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -610,6 +628,7 @@ export const getSiteServiceRequests = async (req: Request, res: Response): Promi
     const formattedRequests = requests.map((reqItem) => ({
       ...reqItem,
       client: reqItem.client ? decryptClientProfile(reqItem.client) : null,
+      visitAssignee: reqItem.visitAssignee ? decryptUserSummary(reqItem.visitAssignee) : null,
     }));
 
     res.json({
@@ -648,6 +667,7 @@ export const getSiteServiceRequestById = async (req: Request, res: Response): Pr
           },
         },
         site: true,
+        visitAssignee: true,
       },
     });
 
@@ -660,6 +680,7 @@ export const getSiteServiceRequestById = async (req: Request, res: Response): Pr
       request: {
         ...request,
         client: request.client ? decryptClientProfile(request.client) : null,
+        visitAssignee: request.visitAssignee ? decryptUserSummary(request.visitAssignee) : null,
       },
     });
   } catch (error) {
@@ -755,11 +776,6 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
       return;
     }
 
-    if (existingRequest.status === ServiceRequestStatus.APPROVED) {
-      res.status(400).json({ error: 'Service request is already approved' });
-      return;
-    }
-
     // Run transaction: create Site, update request, and write encrypted AuditLog
     const result = await prisma.$transaction(async (tx) => {
       let provisionedSiteId = existingRequest.siteId;
@@ -799,6 +815,7 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
         data: {
           status: ServiceRequestStatus.APPROVED,
           siteId: provisionedSiteId,
+          visitStatus: existingRequest.visitStatus === VisitStatus.PENDING ? VisitStatus.COMPLETED : existingRequest.visitStatus,
           adminFeedbackNotes: parsedData.adminFeedbackNotes || 'Site approved and geofence provisioned successfully.',
           reviewedByUserId: userAuth?.userId || null,
           reviewedAt: new Date(),
@@ -806,6 +823,7 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
         include: {
           site: true,
           client: { include: { user: true } },
+          visitAssignee: true,
         },
       });
 
@@ -844,6 +862,7 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
       request: {
         ...result,
         client: result.client ? decryptClientProfile(result.client) : null,
+        visitAssignee: result.visitAssignee ? decryptUserSummary(result.visitAssignee) : null,
       },
     });
   } catch (error) {
@@ -919,6 +938,285 @@ export const rejectSiteServiceRequest = async (req: Request, res: Response): Pro
       res.status(400).json({ error: error.errors });
     } else {
       res.status(500).json({ error: 'Failed to reject site service request' });
+    }
+  }
+};
+
+/**
+ * Revert Site Service Request back to PENDING_REVIEW
+ */
+export const revertSiteServiceRequest = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = revertSiteServiceRequestSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    const updated = await prisma.siteServiceRequest.update({
+      where: { id },
+      data: {
+        status: ServiceRequestStatus.PENDING_REVIEW,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes || existingRequest.adminFeedbackNotes,
+        reviewedByUserId: userAuth?.userId || null,
+        reviewedAt: new Date(),
+      },
+      include: {
+        client: { include: { user: true } },
+        site: true,
+      },
+    });
+
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_REQUEST_REVERTED_TO_PENDING',
+      entityType: 'SERVICE_REQUEST',
+      entityId: id,
+      entityName: existingRequest.propertyName,
+      summary: `Reverted site service request for property: ${existingRequest.propertyName} back to Pending Review`,
+      previousValues: {
+        status: existingRequest.status,
+        adminFeedbackNotes: existingRequest.adminFeedbackNotes,
+      },
+      newValues: {
+        status: ServiceRequestStatus.PENDING_REVIEW,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes || existingRequest.adminFeedbackNotes,
+      },
+      reason: parsedData.adminFeedbackNotes || 'Reverted to Pending Review',
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+    });
+
+    res.json({
+      message: 'Site service request returned to pending review',
+      request: {
+        ...updated,
+        client: updated.client ? decryptClientProfile(updated.client) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to revert site service request' });
+    }
+  }
+};
+
+/**
+ * Retrieve assignable administrative officers & staff for Physical Site Visits
+ */
+export const getVisitAssignees = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        role: { in: [Role.SUPER_ADMIN, Role.SUPERVISOR] },
+        isActive: true,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        staffProfile: {
+          select: {
+            jobTitle: true,
+            department: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const assignees = users.map((u) => ({
+      id: u.id,
+      email: decryptDeterministic(u.email),
+      firstName: u.firstName ? decryptRandomized(u.firstName) : '',
+      lastName: u.lastName ? decryptRandomized(u.lastName) : '',
+      role: u.role,
+      jobTitle: u.staffProfile?.jobTitle || (u.role === Role.SUPER_ADMIN ? 'System Administrator' : 'Operations Supervisor'),
+      department: u.staffProfile?.department || 'Operations',
+    }));
+
+    res.json({ assignees });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to retrieve assignable staff' });
+  }
+};
+
+/**
+ * Schedule a Physical Site Visit for a Service Request
+ */
+export const scheduleSiteVisit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = scheduleSiteVisitSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    const assignee = await prisma.user.findUnique({
+      where: { id: parsedData.visitAssigneeId },
+    });
+
+    if (!assignee) {
+      res.status(404).json({ error: 'Assigned officer / staff not found' });
+      return;
+    }
+
+    const updated = await prisma.siteServiceRequest.update({
+      where: { id },
+      data: {
+        status: ServiceRequestStatus.UNDER_ASSESSMENT,
+        visitAssigneeId: parsedData.visitAssigneeId,
+        visitScheduledAt: parsedData.visitScheduledAt,
+        visitStatus: VisitStatus.PENDING,
+        adminFeedbackNotes: parsedData.adminFeedbackNotes || existingRequest.adminFeedbackNotes,
+        reviewedByUserId: userAuth?.userId || null,
+        reviewedAt: new Date(),
+      },
+      include: {
+        client: { include: { user: true } },
+        site: true,
+        visitAssignee: true,
+      },
+    });
+
+    const assigneeName = `${assignee.firstName ? decryptRandomized(assignee.firstName) : ''} ${assignee.lastName ? decryptRandomized(assignee.lastName) : ''}`.trim() || decryptDeterministic(assignee.email);
+
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_REQUEST_VISIT_SCHEDULED',
+      entityType: 'SERVICE_REQUEST',
+      entityId: id,
+      entityName: existingRequest.propertyName,
+      summary: `Scheduled physical site visit for ${existingRequest.propertyName} assigned to ${assigneeName}`,
+      previousValues: {
+        status: existingRequest.status,
+        visitAssigneeId: existingRequest.visitAssigneeId,
+        visitScheduledAt: existingRequest.visitScheduledAt,
+        visitStatus: existingRequest.visitStatus,
+      },
+      newValues: {
+        status: ServiceRequestStatus.UNDER_ASSESSMENT,
+        visitAssigneeId: parsedData.visitAssigneeId,
+        visitScheduledAt: parsedData.visitScheduledAt,
+        visitStatus: VisitStatus.PENDING,
+      },
+      reason: `Physical Site Visit scheduled for ${parsedData.visitScheduledAt.toISOString().slice(0, 10)}`,
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+    });
+
+    res.json({
+      message: 'Physical site visit scheduled successfully',
+      request: {
+        ...updated,
+        client: updated.client ? decryptClientProfile(updated.client) : null,
+        visitAssignee: updated.visitAssignee ? decryptUserSummary(updated.visitAssignee) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to schedule site visit' });
+    }
+  }
+};
+
+/**
+ * Record interim physical site survey findings and exact coordinates
+ */
+export const recordSiteSurveyReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userAuth = (req as any).user;
+    const { id } = req.params;
+
+    const parsedData = recordSurveyNotesSchema.parse(req.body);
+
+    const existingRequest = await prisma.siteServiceRequest.findUnique({
+      where: { id },
+    });
+
+    if (!existingRequest) {
+      res.status(404).json({ error: 'Site service request not found' });
+      return;
+    }
+
+    const updated = await prisma.siteServiceRequest.update({
+      where: { id },
+      data: {
+        status: ServiceRequestStatus.UNDER_ASSESSMENT,
+        surveyLatitude: parsedData.surveyLatitude,
+        surveyLongitude: parsedData.surveyLongitude,
+        surveyGeofenceRadiusMeters: parsedData.surveyGeofenceRadiusMeters,
+        surveyContactName: parsedData.surveyContactName || null,
+        surveyContactPhone: parsedData.surveyContactPhone || null,
+        surveyNotes: parsedData.surveyNotes || null,
+        surveyConductedAt: parsedData.surveyConductedAt || new Date(),
+        visitStatus: VisitStatus.COMPLETED,
+        reviewedByUserId: userAuth?.userId || null,
+        reviewedAt: new Date(),
+      },
+      include: {
+        client: { include: { user: true } },
+        site: true,
+        visitAssignee: true,
+      },
+    });
+
+    await recordAuditLog({
+      userId: userAuth?.userId || null,
+      action: 'SITE_REQUEST_SURVEY_RECORDED',
+      entityType: 'SERVICE_REQUEST',
+      entityId: id,
+      entityName: existingRequest.propertyName,
+      summary: `Recorded physical site survey report and GPS coordinates for ${existingRequest.propertyName}`,
+      previousValues: {
+        surveyLatitude: existingRequest.surveyLatitude,
+        surveyLongitude: existingRequest.surveyLongitude,
+        surveyNotes: existingRequest.surveyNotes,
+        visitStatus: existingRequest.visitStatus,
+      },
+      newValues: {
+        surveyLatitude: parsedData.surveyLatitude,
+        surveyLongitude: parsedData.surveyLongitude,
+        surveyNotes: parsedData.surveyNotes,
+        visitStatus: VisitStatus.COMPLETED,
+      },
+      reason: 'Physical on-site meeting and perimeter survey completed',
+      ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+    });
+
+    res.json({
+      message: 'Physical site survey report saved successfully',
+      request: {
+        ...updated,
+        client: updated.client ? decryptClientProfile(updated.client) : null,
+        visitAssignee: updated.visitAssignee ? decryptUserSummary(updated.visitAssignee) : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      res.status(500).json({ error: 'Failed to record site survey report' });
     }
   }
 };

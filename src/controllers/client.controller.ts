@@ -510,6 +510,13 @@ export const getMySites = async (req: Request, res: Response): Promise<void> => 
     const sites = await prisma.site.findMany({
       where: { clientId: clientProfile.id },
       include: {
+        serviceRequests: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            visitAssignee: true,
+          },
+        },
         shifts: {
           where: {
             status: ShiftStatus.CHECKED_IN,
@@ -540,30 +547,68 @@ export const getMySites = async (req: Request, res: Response): Promise<void> => 
       orderBy: { createdAt: 'desc' },
     });
 
-    const formattedSites = sites.map((site) => ({
-      id: site.id,
-      name: site.name,
-      address: site.address,
-      latitude: site.latitude,
-      longitude: site.longitude,
-      geofenceRadiusMeters: site.geofenceRadiusMeters,
-      siteInstructions: site.siteInstructions,
-      emergencyContact: site.emergencyContact,
-      activeOfficersCount: site.shifts.length,
-      activeShifts: site.shifts.map((s) => ({
-        id: s.id,
-        checkInTime: s.checkInTime,
-        guard: {
-          firstName: decryptRandomized(s.guard.firstName),
-          lastName: decryptRandomized(s.guard.lastName),
-          profilePictureUrl: s.guard.profilePictureUrl,
-        },
-      })),
-      totalPatrolRoutes: site._count.patrolRoutes,
-      totalIncidents: site._count.incidents,
-      createdAt: site.createdAt,
-      updatedAt: site.updatedAt,
-    }));
+    const formattedSites = sites.map((site) => {
+      const reqRecord = site.serviceRequests && site.serviceRequests.length > 0 ? site.serviceRequests[0] : null;
+
+      // Ensure 100% accurate location: if a physical survey report was conducted, use the surveyed coordinates
+      const effectiveLat = (reqRecord?.surveyLatitude !== null && reqRecord?.surveyLatitude !== undefined)
+        ? reqRecord.surveyLatitude
+        : site.latitude;
+      const effectiveLng = (reqRecord?.surveyLongitude !== null && reqRecord?.surveyLongitude !== undefined)
+        ? reqRecord.surveyLongitude
+        : site.longitude;
+      const effectiveRadius = (reqRecord?.surveyGeofenceRadiusMeters !== null && reqRecord?.surveyGeofenceRadiusMeters !== undefined)
+        ? reqRecord.surveyGeofenceRadiusMeters
+        : site.geofenceRadiusMeters;
+
+      return {
+        id: site.id,
+        name: site.name,
+        address: site.address,
+        latitude: effectiveLat,
+        longitude: effectiveLng,
+        geofenceRadiusMeters: effectiveRadius,
+        siteInstructions: site.siteInstructions,
+        emergencyContact: site.emergencyContact,
+        activeOfficersCount: site.shifts.length,
+        activeShifts: site.shifts.map((s) => ({
+          id: s.id,
+          checkInTime: s.checkInTime,
+          guard: {
+            firstName: decryptRandomized(s.guard.firstName),
+            lastName: decryptRandomized(s.guard.lastName),
+            profilePictureUrl: s.guard.profilePictureUrl,
+          },
+        })),
+        totalShifts: site._count.shifts,
+        totalPatrolRoutes: site._count.patrolRoutes,
+        totalIncidents: site._count.incidents,
+        createdAt: site.createdAt,
+        updatedAt: site.updatedAt,
+        serviceRequest: reqRecord ? {
+          id: reqRecord.id,
+          type: reqRecord.type,
+          status: reqRecord.status,
+          urgency: reqRecord.urgency,
+          requiredGuardsCount: reqRecord.requiredGuardsCount,
+          serviceStartDate: reqRecord.serviceStartDate,
+          serviceEndDate: reqRecord.serviceEndDate,
+          shiftScheduleNotes: reqRecord.shiftScheduleNotes,
+          specialInstructions: reqRecord.specialInstructions,
+          emergencyContactName: reqRecord.emergencyContactName,
+          emergencyContactPhone: reqRecord.emergencyContactPhone,
+          adminFeedbackNotes: reqRecord.adminFeedbackNotes,
+          surveyLatitude: reqRecord.surveyLatitude,
+          surveyLongitude: reqRecord.surveyLongitude,
+          surveyGeofenceRadiusMeters: reqRecord.surveyGeofenceRadiusMeters,
+          surveyContactName: reqRecord.surveyContactName,
+          surveyContactPhone: reqRecord.surveyContactPhone,
+          surveyNotes: reqRecord.surveyNotes,
+          surveyConductedAt: reqRecord.surveyConductedAt,
+          visitAssignee: reqRecord.visitAssignee ? decryptUserSummary(reqRecord.visitAssignee) : null,
+        } : null,
+      };
+    });
 
     res.json({ sites: formattedSites });
   } catch (error) {

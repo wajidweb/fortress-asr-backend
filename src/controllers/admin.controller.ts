@@ -780,6 +780,36 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
     const result = await prisma.$transaction(async (tx) => {
       let provisionedSiteId = existingRequest.siteId;
 
+      // Ensure 100% accurate location: prioritize explicitly sent coordinates, otherwise surveyed GPS from report, then suggested GPS
+      const surveyLat = existingRequest.surveyLatitude !== null && existingRequest.surveyLatitude !== undefined ? Number(existingRequest.surveyLatitude) : null;
+      const surveyLng = existingRequest.surveyLongitude !== null && existingRequest.surveyLongitude !== undefined ? Number(existingRequest.surveyLongitude) : null;
+      const surveyRad = existingRequest.surveyGeofenceRadiusMeters !== null && existingRequest.surveyGeofenceRadiusMeters !== undefined ? existingRequest.surveyGeofenceRadiusMeters : null;
+
+      const finalLat = (req.body.latitude !== undefined && req.body.latitude !== null)
+        ? parsedData.latitude
+        : (surveyLat !== null)
+        ? surveyLat
+        : (existingRequest.suggestedLatitude !== null && existingRequest.suggestedLatitude !== undefined)
+        ? Number(existingRequest.suggestedLatitude)
+        : parsedData.latitude;
+
+      const finalLng = (req.body.longitude !== undefined && req.body.longitude !== null)
+        ? parsedData.longitude
+        : (surveyLng !== null)
+        ? surveyLng
+        : (existingRequest.suggestedLongitude !== null && existingRequest.suggestedLongitude !== undefined)
+        ? Number(existingRequest.suggestedLongitude)
+        : parsedData.longitude;
+
+      const finalRadius = (req.body.geofenceRadiusMeters !== undefined && req.body.geofenceRadiusMeters !== null)
+        ? parsedData.geofenceRadiusMeters
+        : (surveyRad !== null)
+        ? surveyRad
+        : parsedData.geofenceRadiusMeters;
+
+      const finalInstructions = parsedData.siteInstructions || existingRequest.surveyNotes || existingRequest.specialInstructions || null;
+      const finalContact = parsedData.emergencyContact || (existingRequest.surveyContactName ? `${existingRequest.surveyContactName} (${existingRequest.surveyContactPhone || ''})`.trim() : null) || (existingRequest.emergencyContactName ? `${existingRequest.emergencyContactName} (${existingRequest.emergencyContactPhone || ''})`.trim() : null);
+
       if (!provisionedSiteId) {
         // Create new physical site geofence entry
         const newSite = await tx.site.create({
@@ -787,24 +817,24 @@ export const approveSiteServiceRequest = async (req: Request, res: Response): Pr
             clientId: existingRequest.clientId,
             name: existingRequest.propertyName,
             address: existingRequest.propertyAddress,
-            latitude: parsedData.latitude,
-            longitude: parsedData.longitude,
-            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
-            siteInstructions: parsedData.siteInstructions || existingRequest.specialInstructions || null,
-            emergencyContact: parsedData.emergencyContact || (existingRequest.emergencyContactName ? `${existingRequest.emergencyContactName} - ${existingRequest.emergencyContactPhone || ''}`.trim() : null),
+            latitude: finalLat,
+            longitude: finalLng,
+            geofenceRadiusMeters: finalRadius,
+            siteInstructions: finalInstructions,
+            emergencyContact: finalContact,
           },
         });
         provisionedSiteId = newSite.id;
       } else {
-        // Update existing site geofence if values provided
+        // Update existing site geofence with accurate surveyed coordinates
         await tx.site.update({
           where: { id: provisionedSiteId },
           data: {
-            latitude: parsedData.latitude,
-            longitude: parsedData.longitude,
-            geofenceRadiusMeters: parsedData.geofenceRadiusMeters,
-            siteInstructions: parsedData.siteInstructions !== undefined ? parsedData.siteInstructions : undefined,
-            emergencyContact: parsedData.emergencyContact !== undefined ? parsedData.emergencyContact : undefined,
+            latitude: finalLat,
+            longitude: finalLng,
+            geofenceRadiusMeters: finalRadius,
+            siteInstructions: finalInstructions !== undefined ? finalInstructions : undefined,
+            emergencyContact: finalContact !== undefined ? finalContact : undefined,
           },
         });
       }
@@ -1244,6 +1274,13 @@ export const getAllSites = async (req: Request, res: Response): Promise<void> =>
             urlSlug: true,
           },
         },
+        serviceRequests: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            visitAssignee: true,
+          },
+        },
         shifts: {
           where: {
             status: ShiftStatus.CHECKED_IN,
@@ -1270,36 +1307,83 @@ export const getAllSites = async (req: Request, res: Response): Promise<void> =>
       orderBy: { createdAt: 'desc' },
     });
 
-    const formattedSites = sites.map((site) => ({
-      id: site.id,
-      name: site.name,
-      address: site.address,
-      latitude: site.latitude,
-      longitude: site.longitude,
-      geofenceRadiusMeters: site.geofenceRadiusMeters,
-      siteInstructions: site.siteInstructions,
-      emergencyContact: site.emergencyContact,
-      client: {
-        id: site.client.id,
-        companyName: decryptRandomized(site.client.companyName),
-        logoUrl: site.client.logoUrl,
-        urlSlug: site.client.urlSlug,
-      },
-      activeOfficersCount: site.shifts.length,
-      activeShifts: site.shifts.map((s) => ({
-        id: s.id,
-        guard: {
-          firstName: decryptRandomized(s.guard.firstName),
-          lastName: decryptRandomized(s.guard.lastName),
-          profilePictureUrl: s.guard.profilePictureUrl,
+    const formattedSites = sites.map((site) => {
+      const reqRecord = site.serviceRequests && site.serviceRequests.length > 0 ? site.serviceRequests[0] : null;
+
+      // Ensure 100% accurate location: if a physical survey report was conducted, use the surveyed coordinates
+      const effectiveLat = (reqRecord?.surveyLatitude !== null && reqRecord?.surveyLatitude !== undefined)
+        ? reqRecord.surveyLatitude
+        : site.latitude;
+      const effectiveLng = (reqRecord?.surveyLongitude !== null && reqRecord?.surveyLongitude !== undefined)
+        ? reqRecord.surveyLongitude
+        : site.longitude;
+      const effectiveRadius = (reqRecord?.surveyGeofenceRadiusMeters !== null && reqRecord?.surveyGeofenceRadiusMeters !== undefined)
+        ? reqRecord.surveyGeofenceRadiusMeters
+        : site.geofenceRadiusMeters;
+
+      return {
+        id: site.id,
+        name: site.name,
+        address: site.address,
+        latitude: effectiveLat,
+        longitude: effectiveLng,
+        geofenceRadiusMeters: effectiveRadius,
+        siteInstructions: site.siteInstructions,
+        emergencyContact: site.emergencyContact,
+        client: {
+          id: site.client.id,
+          companyName: decryptRandomized(site.client.companyName),
+          logoUrl: site.client.logoUrl,
+          urlSlug: site.client.urlSlug,
         },
-      })),
-      totalShifts: site._count.shifts,
-      totalPatrolRoutes: site._count.patrolRoutes,
-      totalIncidents: site._count.incidents,
-      createdAt: site.createdAt,
-      updatedAt: site.updatedAt,
-    }));
+        activeOfficersCount: site.shifts.length,
+        activeShifts: site.shifts.map((s) => ({
+          id: s.id,
+          guard: {
+            firstName: decryptRandomized(s.guard.firstName),
+            lastName: decryptRandomized(s.guard.lastName),
+            profilePictureUrl: s.guard.profilePictureUrl,
+          },
+        })),
+        totalShifts: site._count.shifts,
+        totalPatrolRoutes: site._count.patrolRoutes,
+        totalIncidents: site._count.incidents,
+        createdAt: site.createdAt,
+        updatedAt: site.updatedAt,
+        serviceRequest: reqRecord ? {
+          id: reqRecord.id,
+          type: reqRecord.type,
+          status: reqRecord.status,
+          urgency: reqRecord.urgency,
+          propertyName: reqRecord.propertyName,
+          propertyAddress: reqRecord.propertyAddress,
+          city: reqRecord.city,
+          postcode: reqRecord.postcode,
+          suggestedLatitude: reqRecord.suggestedLatitude,
+          suggestedLongitude: reqRecord.suggestedLongitude,
+          requiredGuardsCount: reqRecord.requiredGuardsCount,
+          serviceStartDate: reqRecord.serviceStartDate,
+          serviceEndDate: reqRecord.serviceEndDate,
+          shiftScheduleNotes: reqRecord.shiftScheduleNotes,
+          specialInstructions: reqRecord.specialInstructions,
+          emergencyContactName: reqRecord.emergencyContactName,
+          emergencyContactPhone: reqRecord.emergencyContactPhone,
+          adminFeedbackNotes: reqRecord.adminFeedbackNotes,
+          reviewedAt: reqRecord.reviewedAt,
+          visitAssigneeId: reqRecord.visitAssigneeId,
+          visitScheduledAt: reqRecord.visitScheduledAt,
+          visitStatus: reqRecord.visitStatus,
+          surveyLatitude: reqRecord.surveyLatitude,
+          surveyLongitude: reqRecord.surveyLongitude,
+          surveyGeofenceRadiusMeters: reqRecord.surveyGeofenceRadiusMeters,
+          surveyContactName: reqRecord.surveyContactName,
+          surveyContactPhone: reqRecord.surveyContactPhone,
+          surveyNotes: reqRecord.surveyNotes,
+          surveyConductedAt: reqRecord.surveyConductedAt,
+          visitAssignee: reqRecord.visitAssignee ? decryptUserSummary(reqRecord.visitAssignee) : null,
+        } : null,
+      };
+    });
 
     res.json({ sites: formattedSites });
   } catch (error) {

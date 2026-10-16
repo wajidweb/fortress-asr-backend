@@ -20,6 +20,12 @@ if (!fs.existsSync(guardPhotoUploadDir)) {
   fs.mkdirSync(guardPhotoUploadDir, { recursive: true });
 }
 
+// Configure local uploads directory for shift check-in and check-out photos
+const checkInPhotoUploadDir = path.join(__dirname, '../../uploads/check-in-photos');
+if (!fs.existsSync(checkInPhotoUploadDir)) {
+  fs.mkdirSync(checkInPhotoUploadDir, { recursive: true });
+}
+
 /**
  * Resolves file extension safely, falling back to mimetype mapping if extension is absent
  */
@@ -192,6 +198,30 @@ export const guardUpload = multer({
       }
     } else {
       cb(null, true);
+    }
+  }
+});
+
+// Shift attendance upload storage (visual check-in / check-out live camera photos)
+const attendanceUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, checkInPhotoUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = resolveExtension(file.originalname, file.mimetype);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+
+export const attendanceUpload = multer({
+  storage: attendanceUploadStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (isValidImage(file.originalname, file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid image format. Live camera capture must be an image file.'));
     }
   }
 });

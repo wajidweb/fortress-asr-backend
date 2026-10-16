@@ -11,6 +11,15 @@ import {
   inviteStaff, getStaffList, updateStaffPermissions, toggleStaffStatus,
   resendStaffInvitation, getAvailablePermissionsController, deleteStaffUser,
 } from '../controllers/admin.controller';
+import {
+  createShift,
+  getShifts,
+  getShiftById,
+  updateShift,
+  cancelShift,
+  getEligibleGuards,
+  getLiveAttendance,
+} from '../controllers/admin.shift.controller';
 import { changePassword } from '../controllers/security.controller';
 import { requireAuth, requireRole, requirePermission } from '../middlewares/auth.middleware';
 
@@ -171,6 +180,63 @@ router.put(
   requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
   requirePermission('sites:write'),
   updateSite
+);
+
+// Rota & Shift Management
+router.get(
+  '/attendance/live',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:read'),
+  getLiveAttendance
+);
+
+router.get(
+  '/shifts/eligible-guards',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:read'),
+  getEligibleGuards
+);
+
+router.get(
+  '/shifts',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:read'),
+  getShifts
+);
+
+router.post(
+  '/shifts',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:write'),
+  createShift
+);
+
+router.get(
+  '/shifts/:id',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:read'),
+  getShiftById
+);
+
+router.put(
+  '/shifts/:id',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:write'),
+  updateShift
+);
+
+router.put(
+  '/shifts/:id/cancel',
+  requireAuth,
+  requireRole([Role.SUPER_ADMIN, Role.SUPERVISOR]),
+  requirePermission('shifts:dispatch'),
+  cancelShift
 );
 
 // Encrypted Audit Logs (Append-only & Read-Only for Super Admin accountability)

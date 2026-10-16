@@ -1272,6 +1272,7 @@ export const getAllSites = async (req: Request, res: Response): Promise<void> =>
             companyName: true,
             logoUrl: true,
             urlSlug: true,
+            billingRateHour: true,
           },
         },
         serviceRequests: {
